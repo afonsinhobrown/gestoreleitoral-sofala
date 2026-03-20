@@ -99,13 +99,13 @@ export default function App() {
            <p style={{ opacity: 0.6, fontSize: 12, fontWeight: 700, letterSpacing: 1, marginTop: 12 }}>{regForm.evento}</p>
         </div>
         <div style={{ display: 'grid', gap: 16 }}>
-          <button className="glass-card" style={{ padding: 24, textAlign: 'left', border: '1px solid #4ade80', display: 'flex', gap: 20 }} onClick={() => setView('role-selection')}><Briefcase color="#4ade80"/> <div><h3 style={{ margin: 0 }}>Candidatagem</h3><p style={{ opacity: 0.4, fontSize: 12, margin: '4px 0 0' }}>Novo Registo Nacional</p></div></button>
+          <button className="glass-card" style={{ padding: 24, textAlign: 'left', border: '1px solid #4ade80', display: 'flex', gap: 20 }} onClick={() => setView('role-selection')}><Briefcase color="#4ade80"/> <div><h3 style={{ margin: 0 }}>Candidatura</h3><p style={{ opacity: 0.4, fontSize: 12, margin: '4px 0 0' }}>Novo Registo Nacional</p></div></button>
           <button className="glass-card" style={{ padding: 24, textAlign: 'left', display: 'flex', gap: 20 }} onClick={() => setView('login')}><User color="#d4a30d"/> <div><h3 style={{ margin: 0 }}>Portal do Candidato</h3><p style={{ opacity: 0.4, fontSize: 12, margin: '4px 0 0' }}>Consultar Estado</p></div></button>
         </div>
       </motion.div>}
 
       {view === 'role-selection' && <div className="premium-container" style={{ justifyContent: 'center' }}>
-         <div style={{ textAlign: 'center', marginBottom: 32 }}><h2 className="gold-gradient-text" style={{ fontSize: 20, fontWeight: 900 }}>TIPO DE INSCRIÇÃO</h2><p style={{ opacity: 0.5 }}>Selecione a sua função no processo de 2026.</p></div>
+         <div style={{ textAlign: 'center', marginBottom: 32 }}><h2 className="gold-gradient-text" style={{ fontSize: 20, fontWeight: 900 }}>TIPO DE CANDIDATURA</h2><p style={{ opacity: 0.5 }}>Selecione a sua função no processo de 2026.</p></div>
          <div style={{ display: 'grid', gap: 10 }}>
             {['MMV - Membro de Mesa de Voto', 'Brigadista Distrital', 'Agente de Educação Cívica', 'Supervisor de Posto'].map(role => (
               <button key={role} className="glass-card" style={{ padding: 20, textAlign: 'center', fontWeight: 600, fontSize: 14 }} onClick={() => { setRegForm({...regForm, categoria: role}); setView('geo-selection'); }}>{role}</button>
@@ -154,7 +154,7 @@ export default function App() {
             <div style={{ background: '#001f42', padding: 16, textAlign: 'center' }}><img src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Coat_of_arms_of_Mozambique.svg/1200px-Coat_of_arms_of_Mozambique.svg.png" width="36" /><p style={{ color: 'white', fontSize: 9, fontWeight: 900, marginTop: 8 }}>REPÚBLICA DE MOÇAMBIQUE</p><p style={{ color: '#d4a30d', fontSize: 10, fontWeight: 900 }}>SECRETARIADO TÉCNICO DE ADMINISTRAÇÃO ELEITORAL</p></div>
             <div style={{ padding: 24, color: '#333', textAlign: 'center' }}>
                <h2 style={{ fontSize: 13, color: '#001f42', fontWeight: 900 }}>{regForm.evento}</h2>
-               <p style={{ fontSize: 10, color: '#d4a30d', fontWeight: 800, marginBottom: 16 }}>{regForm.categoria.toUpperCase()}</p>
+               <p style={{ fontSize: 10, color: '#d4a30d', fontWeight: 800, marginBottom: 16 }}>CANDIDATURA: {regForm.categoria.toUpperCase()}</p>
                <img src={extractedPhoto} width="100" style={{ borderRadius: 8, border: '1px solid #ccc', padding: 4, marginBottom: 12 }} />
                <h3 style={{ fontSize: 18, color: '#000', marginBottom: 2 }}>{regForm.nome}</h3>
                <p style={{ fontSize: 11, color: '#666' }}>{regForm.distrito} | {regForm.posto}</p>
