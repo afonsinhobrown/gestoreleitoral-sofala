@@ -10,7 +10,8 @@ import {
   Search,
   FileText,
   Filter,
-  BarChart
+  BarChart,
+  LogOut
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://staeapi-sofala.onrender.com';
@@ -29,13 +30,13 @@ const styles = {
 
 export default function App() {
   const [candidates, setCandidates] = useState([]);
-  const [activeEvent, setActiveEvent] = useState('ELEIÇÕES GERAIS 2024');
+  const [selectedRole, setSelectedRole] = useState('Todos');
 
   useEffect(() => {
-    // PAUTA OFICIAL COM TIPO DE INSCRIÇÃO
+    // PAUTA OFICIAL 2026
     setCandidates([
       { id: 1, nome: "AFONSO ALEXANDRE PENE", nuit: "110100557622Q", distrito: "BEIRA", role: "MMV", status: "VALIDADO" },
-      { id: 2, nome: "INSCRITO NACIONAL TESTE", nuit: "123456789", distrito: "DONDO", role: "BRIGADISTA", status: "PENDENTE" }
+      { id: 2, nome: "CANDIDATO EM ANÁLISE 01", nuit: "11019922Q", distrito: "DONDO", role: "BRIGADISTA", status: "PENDENTE" }
     ]);
   }, []);
 
@@ -45,47 +46,48 @@ export default function App() {
         <div>
           <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Coat_of_arms_of_Mozambique.svg/1200px-Coat_of_arms_of_Mozambique.svg.png" width="60" style={{ marginBottom: 24 }}/>
           <h2 style={{ fontSize: 16, fontWeight: 900, background: 'linear-gradient(to right, #d4a30d, #fff)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', lineHeight: 1.3 }}>SECRETARIADO TÉCNICO DE ADMINISTRAÇÃO ELEITORAL</h2>
-          <p style={{ fontSize: 10, opacity: 0.4, letterSpacing: 2, fontWeight: 700, marginTop: 10 }}>GESTOR PROVINCIAL - SOFALA</p>
+          <p style={{ fontSize: 10, opacity: 0.4, letterSpacing: 2, fontWeight: 700, marginTop: 10 }}>PROVÍNCIA DE SOFALA - 2026</p>
         </div>
         <nav style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ ...styles.card, background: 'rgba(212,163,13,0.1)', border: '1px solid #d4a30d', display: 'flex', gap: 16, alignItems: 'center' }}><Users color="#d4a30d" size={20}/> <b>Candidaturas</b></div>
           <div style={{ padding: '12px 20px', opacity: 0.4, display: 'flex', gap: 16, alignItems: 'center' }}><MapPin size={20}/> Postos Online</div>
-          <div style={{ padding: '12px 20px', opacity: 0.4, display: 'flex', gap: 16, alignItems: 'center' }}><FileText size={20}/> Relatórios</div>
-          <div style={{ padding: '12px 20px', opacity: 0.4, display: 'flex', gap: 16, alignItems: 'center' }}><BarChart size={20}/> Estatísticas 2024</div>
+          <div style={{ padding: '12px 20px', opacity: 0.4, display: 'flex', gap: 16, alignItems: 'center' }}><FileText size={20}/> Relatórios Oficiais</div>
+          <div style={{ padding: '12px 20px', opacity: 0.4, display: 'flex', gap: 16, alignItems: 'center' }}><BarChart size={20}/> Estatísticas Nacional</div>
         </nav>
+        <button style={{ marginTop: 'auto', background: 'none', border: 'none', color: '#fff', opacity: 0.5, display: 'flex', gap: 12, alignItems: 'center' }}><LogOut size={16}/> Sair do Sistema</button>
       </aside>
 
       <main style={styles.main}>
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 48 }}>
-           <div><h1 style={{ fontSize: 28, fontWeight: 900 }}>Gestão Eleitoral - {activeEvent}</h1><p style={{ opacity: 0.5, marginTop: 8 }}>Painel de Controlo de Candidaturas Oficiais</p></div>
-           <button style={styles.button}><Plus/> REGISTO PRESENCIAL</button>
+           <div><h1 style={{ fontSize: 28, fontWeight: 900 }}>Gestão Eleitoral 2026</h1><p style={{ opacity: 0.5, marginTop: 8 }}>Pauta Digital de Monitorização e Validação de Sofala</p></div>
+           <button style={styles.button}><Plus/> NOVO REGISTO PRESENCIAL</button>
         </header>
 
         <div style={{ display: 'flex', gap: 24, marginBottom: 48 }}>
-           {[{ label: "MMV", val: "1", color: "#d4a30d" }, { label: "BRIGADISTAS", val: "1", color: "#60a5fa" }, { label: "PENDENTES", val: "1", color: "#f59e0b" }, { label: "VALIDADOS", val: "1", color: "#10b981" }].map((s, i) => (
-             <div key={i} style={styles.statCard}><p style={{ fontSize: 10, fontWeight: 900, opacity: 0.4 }}>{s.label}</p><h3 style={{ fontSize: 32, fontWeight: 900, color: s.color }}>{s.val}</h3></div>
+           {[{ l: "MMV", v: "1", c: "#d4a30d" }, { l: "BRIGADISTAS", v: "1", c: "#22d3ee" }, { l: "SUPERVISORES", v: "0", c: "#10b981" }, { l: "RESTANTES", v: "0", c: "#6366f1" }].map((s, i) => (
+             <div key={i} style={styles.statCard}><p style={{ fontSize: 10, fontWeight: 900, opacity: 0.4 }}>{s.l}</p><h3 style={{ fontSize: 32, fontWeight: 900, color: s.c }}>{s.v}</h3></div>
            ))}
         </div>
 
         <div style={styles.card}>
-           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18 }}><ShieldCheck color="#10b981"/> Pauta de Candidatos Registados</h3>
-              <div style={{ display: 'flex', gap: 12 }}><button style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: 8, fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}><Filter size={14}/> Filtrar por Tipo</button></div>
+           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 32 }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18 }}><ShieldCheck color="#10b981"/> Candidatos Monitorizados</h3>
+              <div style={{ display: 'flex', gap: 12, background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 8 }}><Filter size={16} /><select style={{ background: 'none', border: 'none', color: '#fff' }} onChange={(e) => setSelectedRole(e.target.value)}><option>Todos</option><option>MMV</option><option>Brigadista</option></select></div>
            </div>
            
            <table style={styles.table}>
               <thead>
-                 <tr><th style={styles.th}>Nome Candidato</th><th style={styles.th}>Identificação</th><th style={styles.th}>Tipo Inscrição</th><th style={styles.th}>Município</th><th style={styles.th}>Estado</th><th style={styles.th}>Acções</th></tr>
+                 <tr><th style={styles.th}>Nome Titular</th><th style={styles.th}>Identificação</th><th style={styles.th}>Função</th><th style={styles.th}>Distrito</th><th style={styles.th}>Estado</th><th style={styles.th}>Controlo</th></tr>
               </thead>
               <tbody>
-                 {candidates.map(c => (
+                 {candidates.filter(c => selectedRole === 'Todos' || c.role === selectedRole.toUpperCase()).map(c => (
                     <tr key={c.id}>
                        <td style={styles.td}><b>{c.nome}</b></td>
-                       <td style={styles.td}><span style={{ opacity: 0.5, fontSize: 12 }}>{c.nuit}</span></td>
-                       <td style={styles.td}><span style={{ border: '1px solid rgba(212,163,13,0.3)', color: '#d4a30d', padding: '4px 10px', borderRadius: 8, fontSize: 10, fontWeight: 800 }}>{c.role}</span></td>
-                       <td style={styles.td}><span style={{ opacity: 0.6, fontSize: 13 }}>{c.distrito}</span></td>
-                       <td style={styles.td}><span style={{ color: c.status === 'VALIDADO' ? '#10b981' : '#f59e0b', fontSize: 10, fontWeight: 900 }}>{c.status}</span></td>
-                       <td style={styles.td}><button style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid #10b981', color: '#10b981', padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>APROVAR</button></td>
+                       <td style={styles.td}><span style={{ opacity: 0.5 }}>{c.nuit}</span></td>
+                       <td style={styles.td}><span style={{ color: '#d4a30d', fontWeight: 800 }}>{c.role}</span></td>
+                       <td style={styles.td}>{c.distrito}</td>
+                       <td style={styles.td}><span style={{ color: c.status === 'VALIDADO' ? '#10b981' : '#f59e0b', fontSize: 11, fontWeight: 900 }}>{c.status}</span></td>
+                       <td style={styles.td}><button style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid #10b981', color: '#10b981', padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>VERIFICAR</button></td>
                     </tr>
                  ))}
               </tbody>
