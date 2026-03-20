@@ -19,7 +19,7 @@ import {
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://staeapi-sofala.onrender.com';
 
-// --- MOTOR DE RECORTE (VISÃO OPERACIONAL) ---
+// --- MOTOR DE RECORTE (VALORIZAÇÃO BIOMÉTRICA) ---
 const FlexibleCropView = ({ rawImage, onFinalize, onCancel }) => {
   const containerRef = useRef(null);
   const imgRef = useRef(null);
@@ -43,9 +43,10 @@ const FlexibleCropView = ({ rawImage, onFinalize, onCancel }) => {
 
   return (
     <div className="premium-container" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: '#000', padding: 0 }}>
-       <div style={{ padding: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#001f42' }}>
+       <div style={{ padding: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#001f42', borderBottom: '1px solid var(--stae-gold)' }}>
           <button onClick={onCancel} style={{ color: 'white', background: 'none', border: 'none' }}><ArrowLeft/></button>
-          <h3 style={{ fontSize: 16 }}>Enquadramento Biométrico</h3>
+          <h3 style={{ fontSize: 13, fontWeight: 800, letterSpacing: 1 }}>ENQUADRAMENTO BIOMÉTRICO</h3>
+          <div style={{ width: 40 }}/>
        </div>
        <div ref={containerRef} style={{ position: 'relative', flex: 1, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <img ref={imgRef} src={rawImage} style={{ maxWidth: '100%', maxHeight: '100%', pointerEvents: 'none' }} />
@@ -58,13 +59,13 @@ const FlexibleCropView = ({ rawImage, onFinalize, onCancel }) => {
        </div>
        <div style={{ padding: '24px 32px', background: '#001f42', textAlign: 'center' }}>
           <input type="range" min="60" max="350" value={squareSize} onChange={(e) => setSquareSize(parseInt(e.target.value))} style={{ width: '100%', accentColor: 'var(--stae-gold)', marginBottom: 20 }} />
-          <button className="stae-button" onClick={generateImg}>CAPTURAR FOTOGRAFIA</button>
+          <button className="stae-button" onClick={generateImg}>FINALIZAR CAPTURA DE IMAGEM</button>
        </div>
     </div>
   );
 };
 
-// --- APP PRINCIPAL (100% INSTITUCIONAL) ---
+// --- APP PRINCIPAL (100% RIGOR NACIONAL) ---
 export default function App() {
   const [view, setView] = useState('landing');
   const [loading, setLoading] = useState(false);
@@ -110,45 +111,48 @@ export default function App() {
         body: JSON.stringify({ ...regForm, photo: extractedPhoto })
       });
       setView('portal');
-    } catch { alert('Erro na comunicação nacional'); }
+    } catch { alert('Falha técnica de comunicação'); }
     finally { setLoading(false); }
   };
 
   return (
     <AnimatePresence mode='wait'>
       {view === 'landing' && <div className="premium-container" style={{ justifyContent: 'center' }}>
-        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Coat_of_arms_of_Mozambique.svg/1200px-Coat_of_arms_of_Mozambique.svg.png" width="90" style={{ margin: '0 auto 32px', display: 'block' }}/>
-        <div style={{ textAlign: 'center', marginBottom: 48 }}><h1 className="gold-gradient-text" style={{ fontSize: 26, marginBottom: 8 }}>STAE MOÇAMBIQUE</h1><p style={{ opacity: 0.6, fontSize: 13, fontWeight: 700 }}>PAINEL DO CANDIDATO MMV</p></div>
+        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Coat_of_arms_of_Mozambique.svg/1200px-Coat_of_arms_of_Mozambique.svg.png" width="80" style={{ margin: '0 auto 32px', display: 'block' }}/>
+        <div style={{ textAlign: 'center', marginBottom: 48 }}>
+          <h1 className="gold-gradient-text" style={{ fontSize: 20, marginBottom: 8, lineHeight: 1.2 }}>SECRETARIADO TÉCNICO DE ADMINISTRAÇÃO ELEITORAL</h1>
+          <p style={{ opacity: 0.6, fontSize: 13, fontWeight: 700, letterSpacing: 2 }}>PAINEL DO CANDIDATO MMV</p>
+        </div>
         <div style={{ display: 'grid', gap: 16 }}>
-          <button className="glass-card" style={{ padding: 24, textAlign: 'left', display: 'flex', gap: 20 }} onClick={() => setView('login')}><User color="var(--stae-gold)"/> <div><h3>Acesso ao Portal</h3><p style={{ opacity: 0.4, fontSize: 12 }}>Consultar Candidatura Nacional</p></div></button>
-          <button className="glass-card" style={{ padding: 24, textAlign: 'left', display: 'flex', gap: 20 }} onClick={() => setView('register')}><ShieldCheck color="#4ade80"/> <div><h3>Nova Inscrição</h3><p style={{ opacity: 0.4, fontSize: 12 }}>Registo Biométrico 2024</p></div></button>
+          <button className="glass-card" style={{ padding: 24, textAlign: 'left', display: 'flex', gap: 20 }} onClick={() => setView('login')}><User color="var(--stae-gold)"/> <div><h3>Entrar no Sistema</h3><p style={{ opacity: 0.4, fontSize: 12 }}>Acesso à Pauta Digital</p></div></button>
+          <button className="glass-card" style={{ padding: 24, textAlign: 'left', display: 'flex', gap: 20 }} onClick={() => setView('register')}><ShieldCheck color="#4ade80"/> <div><h3>Efetuar Candidatura</h3><p style={{ opacity: 0.4, fontSize: 12 }}>Registo Biométrico Nacional</p></div></button>
         </div>
       </div>}
 
-      {view === 'register' && <div className="premium-container" style={{ justifyContent: 'center' }}><motion.div initial={{ opacity: 0 }} className="glass-card" style={{ textAlign: 'center' }}><h2 className="gold-gradient-text" style={{ fontSize: 24, marginBottom: 12 }}>RECONHECIMENTO DE BI</h2><p style={{ opacity: 0.6, marginBottom: 40 }}>O sistema nacional irá processar o seu documento moçambicano.</p><label className="stae-button" style={{ display: 'flex', gap: 12, justifyContent: 'center', cursor: 'pointer' }}><Camera /> {loading ? `Processando... ${ocrProgress}%` : 'Iniciar Scanner'}<input type="file" accept="image/*" onChange={handleFileUpload} style={{ display: 'none' }} disabled={loading} /></label></motion.div></div>}
+      {view === 'register' && <div className="premium-container" style={{ justifyContent: 'center' }}><motion.div initial={{ opacity: 0 }} className="glass-card" style={{ textAlign: 'center' }}><h2 className="gold-gradient-text" style={{ fontSize: 20, marginBottom: 12 }}>PROCESSAMENTO DE DOCUMENTOS</h2><p style={{ opacity: 0.6, marginBottom: 40, fontSize: 14 }}>O sistema irá validar os dados do Bilhete de Identidade biometrizado conforme as normas vigentes.</p><label className="stae-button" style={{ display: 'flex', gap: 12, justifyContent: 'center', cursor: 'pointer' }}><Camera /> {loading ? `Validando... ${ocrProgress}%` : 'Abrir Scanner Oficial'}<input type="file" accept="image/*" onChange={handleFileUpload} style={{ display: 'none' }} disabled={loading} /></label></motion.div></div>}
       {view === 'crop' && <FlexibleCropView rawImage={rawImage} onCancel={() => setView('register')} onFinalize={(photo) => { setExtractedPhoto(photo); setView('confirm'); }} />}
 
       {view === 'confirm' && <div className="premium-container">
-         <div className="glass-card" style={{ padding: 24, textAlign: 'center', marginBottom: 24 }}><img src={extractedPhoto} width="120" style={{ borderRadius: 20, border: '3px solid var(--stae-gold)' }} /><p style={{ fontSize: 11, opacity: 0.5, marginTop: 12 }}>BIOMETRIA VALIDADA</p></div>
-         <div className="glass-card"><div style={{ display: 'grid', gap: 16 }}><div><p style={{ fontSize: 11, opacity: 0.4 }}>NOME LIDO</p><input type="text" className="stae-input" value={regForm.nome} onChange={e => setRegForm({...regForm, nome: e.target.value})} /></div><div><p style={{ fontSize: 11, opacity: 0.4 }}>Nº BI / NUIT</p><input type="text" className="stae-input" value={regForm.nuit} onChange={e => setRegForm({...regForm, nuit: e.target.value})} /></div></div><button className="stae-button" style={{ marginTop: 24 }} onClick={handleFinalSubmit}>{loading ? 'Enviando...' : 'Finalizar Inscrição'}</button></div>
+         <div className="glass-card" style={{ padding: 24, textAlign: 'center', marginBottom: 24 }}><img src={extractedPhoto} width="120" style={{ borderRadius: 20, border: '3px solid var(--stae-gold)' }} /><p style={{ fontSize: 11, opacity: 0.5, marginTop: 12 }}>REGISTO FOTOGRÁFICO VALIDADO</p></div>
+         <div className="glass-card"><div style={{ display: 'grid', gap: 16 }}><div><p style={{ fontSize: 11, opacity: 0.4 }}>NOME COMPLETO DO CANDIDATO</p><input type="text" className="stae-input" value={regForm.nome} onChange={e => setRegForm({...regForm, nome: e.target.value})} /></div><div><p style={{ fontSize: 11, opacity: 0.4 }}>Nº DE IDENTIFICAÇÃO (BI/NUIT)</p><input type="text" className="stae-input" value={regForm.nuit} onChange={e => setRegForm({...regForm, nuit: e.target.value})} /></div></div><button className="stae-button" style={{ marginTop: 24 }} onClick={handleFinalSubmit}>{loading ? 'A Submeter...' : 'Confirmar e Finalizar'}</button></div>
       </div>}
 
       {view === 'portal' && <div className="premium-container" style={{ justifyContent: 'center' }}>
          <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} style={{ background: 'white', borderRadius: 16, overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.4)', border: '1px solid #ddd' }}>
-            <div style={{ background: '#001f42', padding: 16, textAlign: 'center' }}><img src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Coat_of_arms_of_Mozambique.svg/1200px-Coat_of_arms_of_Mozambique.svg.png" width="40" /><p style={{ color: 'white', fontSize: 10, fontWeight: 900, marginTop: 8 }}>REPÚBLICA DE MOÇAMBIQUE</p><p style={{ color: 'var(--stae-gold)', fontSize: 11, fontWeight: 900 }}>STAE - SECRETARIADO TÉCNICO DE ADMINISTRAÇÃO ELEITORAL</p></div>
+            <div style={{ background: '#001f42', padding: 16, textAlign: 'center' }}><img src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Coat_of_arms_of_Mozambique.svg/1200px-Coat_of_arms_of_Mozambique.svg.png" width="36" /><p style={{ color: 'white', fontSize: 9, fontWeight: 900, marginTop: 8 }}>REPÚBLICA DE MOÇAMBIQUE</p><p style={{ color: 'var(--stae-gold)', fontSize: 10, fontWeight: 900 }}>SECRETARIADO TÉCNICO DE ADMINISTRAÇÃO ELEITORAL</p></div>
             <div style={{ padding: 24, color: '#333', textAlign: 'center' }}>
-               <h2 style={{ fontSize: 15, marginBottom: 20, color: '#001f42' }}>CREDENCIAL DE FORMAÇÃO NACIONAL</h2>
+               <h2 style={{ fontSize: 14, marginBottom: 20, color: '#001f42', fontWeight: 900 }}>CREDENCIAL OFICIAL DE CANDIDATURA MMV</h2>
                <img src={extractedPhoto} width="110" style={{ borderRadius: 8, border: '1px solid #ccc', padding: 4, marginBottom: 16 }} />
                <h3 style={{ fontSize: 18, color: '#000', marginBottom: 4 }}>{regForm.nome}</h3>
-               <p style={{ fontSize: 12, opacity: 0.6 }}>NUIT: {regForm.nuit}</p>
+               <p style={{ fontSize: 12, opacity: 0.6 }}>NUIT/BI: {regForm.nuit}</p>
                <div style={{ margin: '24px 0', border: '1px dashed #ccc', padding: 16, display: 'flex', justifyContent: 'center' }}><img src={`https://api.qrserver.com/v1/create-qr-code/?data=${regForm.nuit}&size=100x100`} width="100" /></div>
-               <div style={{ display: 'flex', justifyContent: 'center', gap: 8, alignItems: 'center', color: '#10b981' }}><CheckCircle size={16}/><span style={{ fontSize: 11, fontWeight: 700 }}>VALIDADO PARA O PROCESSO ELEITORAL 2024</span></div>
+               <div style={{ display: 'flex', justifyContent: 'center', gap: 8, alignItems: 'center', color: '#10b981' }}><CheckCircle size={16}/><span style={{ fontSize: 11, fontWeight: 700 }}>VALIDADO PARA O PROCESSO ELEITORAL</span></div>
             </div>
-            <div style={{ background: '#f8fafc', padding: 16, textAlign: 'center' }}><button className="stae-button" onClick={() => setView('landing')} style={{ background: '#001f42' }}>FECHAR E SALVAR</button></div>
+            <div style={{ background: '#f8fafc', padding: 14, textAlign: 'center' }}><button className="stae-button" onClick={() => setView('landing')} style={{ background: '#001f42', fontSize: 12 }}>SAIR DO PORTAL</button></div>
          </motion.div>
       </div>}
 
-      {view === 'login' && <div className="premium-container" style={{ justifyContent: 'center' }}><div className="glass-card"><h2 style={{ textAlign: 'center', marginBottom: 24 }}>Acesso Seguro</h2><input type="email" className="stae-input" placeholder="NUIT ou BI" /><button className="stae-button" onClick={() => setView('landing')}>Voltar</button></div></div>}
+      {view === 'login' && <div className="premium-container" style={{ justifyContent: 'center' }}><div className="glass-card"><h2 style={{ textAlign: 'center', marginBottom: 24 }}>Autenticação Segura</h2><input type="email" className="stae-input" placeholder="Nº de Documento" /><button className="stae-button" onClick={() => setView('landing')}>Voltar</button></div></div>}
     </AnimatePresence>
   );
 }
