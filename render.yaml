@@ -1,0 +1,16 @@
+services:
+  # MOTOR CENTRAL (STAE API SOFALA) - ÚNICO SERVIÇO NO RENDER
+  - type: web
+    name: stae-api-sofala
+    env: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node app.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stae-sofala-db
+          property: connectionString
