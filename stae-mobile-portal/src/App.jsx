@@ -1,183 +1,1092 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import Tesseract from 'tesseract.js';
-import { 
-  User, 
-  MapPin, 
-  Award, 
-  LogOut,
-  Camera,
-  ArrowLeft,
-  CheckCircle,
-  ShieldCheck,
-  Briefcase,
-  FileText,
-  Upload,
-  Globe,
-  ChevronRight,
-  UserPlus
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import {
+   User, FileText, Bell, CheckCircle, XCircle, Calendar,
+   MapPin, Phone, Mail, Lock, LogIn, UserPlus, Home,
+   ChevronRight, Download, QrCode, Clock, BookOpen, Plus
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://staeapi-sofala.onrender.com';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-// CARTOGRAFIA OFICIAL DE SOFALA - RIGOR PROACTIVO
-const SOFALA_GEO = {
-  provincia: 'Sofala',
-  distritos: [
-    { name: 'Beira', postos: ['Beira (Cidade)', 'Munhava', 'Manga', 'Ponta-Gêa', 'Chaimite', 'Nhangau'] },
-    { name: 'Dondo', postos: ['Dondo (Cidade)', 'Mafambisse'] },
-    { name: 'Nhamatanda', postos: ['Nhamatanda (Vila)', 'Tica', 'Metuchira'] },
-    { name: 'Búzi', postos: ['Búzi-Sede', 'Estaquinha', 'Nova Sofala'] },
-    { name: 'Caia', postos: ['Caia (Vila)', 'Sena', 'Murraça'] },
-    { name: 'Gorongosa', postos: ['Gorongosa (Vila)', 'Vunduzi'] },
-    { name: 'Marromeu', postos: ['Marromeu (Vila)', 'Chupanga'] },
-    { name: 'Chemba', postos: ['Chemba-Sede', 'Chiramba', 'Mulima'] },
-    { name: 'Cheringoma', postos: ['Inhaminga', 'Inhamitanga'] },
-    { name: 'Chibabava', postos: ['Chibabava-Sede', 'Goonda', 'Muxungue'] },
-    { name: 'Machanga', postos: ['Machanga-Sede', 'Divinhe'] },
-    { name: 'Maringué', postos: ['Maringué-Sede', 'Canxixe', 'Subui'] },
-    { name: 'Muanza', postos: ['Muanza-Sede', 'Galinha'] }
-  ]
-};
+const App = () => {
+   const [view, setView] = useState('home');
+   const [user, setUser] = useState(null);
+   const [candidatura, setCandidatura] = useState(null);
+   const [notificacoes, setNotificacoes] = useState([]);
+   const [loading, setLoading] = useState(false);
+   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+   const [registroForm, setRegistroForm] = useState({
+      email: '',
+      password: '',
+      nome_completo: '',
+      nuit: '',
+      contacto: '',
+      genero: 'Masculino'
+   });
+   const [submeterForm, setSubmeterForm] = useState({
+      categoria_id: '',
+      provincia_actuacao_id: '',
+      distrito_actuacao_id: '',
+      posto_actuacao_id: '',
+      localidade_actuacao_id: '',
+      documento_bi: null,
+      documento_certificado: null,
+      observacoes: ''
+   });
 
-const FlexibleCropView = ({ rawImage, onFinalize, onCancel }) => {
-  const containerRef = useRef(null);
-  const imgRef = useRef(null);
-  const [squareSize, setSquareSize] = useState(140);
-  const [cropPos, setCropPos] = useState({ x: 0, y: 0 });
+   // Verificar se há utilizador logado
+   useEffect(() => {
+      const savedUser = localStorage.getItem('stae_user');
+      if (savedUser) {
+         setUser(JSON.parse(savedUser));
+         carregarDadosUtilizador(JSON.parse(savedUser).id);
+      }
+   }, []);
 
-  const generateImg = async () => {
-    const img = imgRef.current;
-    const imageActual = new Image();
-    imageActual.src = rawImage;
-    await new Promise(resolve => imageActual.onload = resolve);
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const scaleX = imageActual.naturalWidth / img.clientWidth;
-    const scaleY = imageActual.naturalHeight / img.clientHeight;
-    canvas.width = squareSize * scaleX;
-    canvas.height = squareSize * scaleY;
-    const rect = img.getBoundingClientRect();
-    ctx.drawImage(imageActual, (cropPos.x + rect.width/2 - squareSize/2) * scaleX, (cropPos.y + rect.height/2 - squareSize/2) * scaleY, squareSize * scaleX, squareSize * scaleY, 0, 0, canvas.width, canvas.height);
-    onFinalize(canvas.toDataURL('image/jpeg'));
-  };
+   const carregarDadosUtilizador = async (userId) => {
+      setLoading(true);
+      try {
+         // Carregar candidatura do utilizador
+         const candidaturaRes = await fetch(`${API_URL}/api/candidaturas`);
+         if (candidaturaRes.ok) {
+            const data = await candidaturaRes.json();
+            const userCandidatura = data.candidaturas?.find(c => c.utilizador_id === userId);
+            setCandidatura(userCandidatura);
+         }
 
-  return (
-    <div className="premium-container" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: '#000', display: 'flex', flexDirection: 'column' }}>
-       <div style={{ padding: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#001f42', borderBottom: '1px solid #d4a30d' }}>
-          <button onClick={onCancel} style={{ color: 'white', background: 'none', border: 'none' }}><ArrowLeft/></button>
-          <h3 style={{ fontSize: 13, fontWeight: 800 }}>RECORTE BIOMÉTRICO 2026</h3>
-          <div style={{ width: 40 }}/>
-       </div>
-       <div ref={containerRef} style={{ position: 'relative', flex: 1, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <img ref={imgRef} src={rawImage} style={{ maxWidth: '100%', maxHeight: '100%', pointerEvents: 'none' }} />
-          <motion.div drag dragConstraints={containerRef} dragMomentum={false} onDrag={(e, info) => setCropPos({ x: info.offset.x, y: info.offset.y })}
-            style={{ position: 'absolute', width: squareSize, height: squareSize, border: '3px solid #d4a30d', borderRadius: 12, boxShadow: '0 0 0 5000px rgba(0,0,0,0.8)', zIndex: 100 }}
-          />
-       </div>
-       <div style={{ padding: '24px 32px', background: '#001f42', textAlign: 'center' }}>
-          <input type="range" min="60" max="350" value={squareSize} onChange={(e) => setSquareSize(parseInt(e.target.value))} style={{ width: '100%', accentColor: '#d4a30d', marginBottom: 20 }} />
-          <button className="stae-button" onClick={generateImg}>CONFIRMAR FOTO OFICIAL</button>
-       </div>
-    </div>
-  );
-};
+         // Carregar notificações
+         const notificacoesRes = await fetch(`${API_URL}/api/notificacoes/${userId}`);
+         if (notificacoesRes.ok) {
+            const data = await notificacoesRes.json();
+            setNotificacoes(data.notificacoes || []);
+         }
+      } catch (error) {
+         console.error('Erro ao carregar dados:', error);
+      } finally {
+         setLoading(false);
+      }
+   };
 
-export default function App() {
-  const [view, setView] = useState('landing');
-  const [loading, setLoading] = useState(false);
-  const [rawImage, setRawImage] = useState(null);
-  const [extractedPhoto, setExtractedPhoto] = useState(null);
-  const [certificatesAttached, setCertificatesAttached] = useState(false);
-  const [regForm, setRegForm] = useState({ 
-    nome: '', nuit: '', genero: '', categoria: '', evento: 'PROCESSO ELEITORAL 2026',
-    provincia: 'Sofala', distrito: '', posto: '', localidade: ''
-  });
+   const handleLogin = async (e) => {
+      e.preventDefault();
+      setLoading(true);
 
-  const distritosDisponiveis = SOFALA_GEO.distritos;
-  const postosDisponiveis = distritosDisponiveis.find(d => d.name === regForm.distrito)?.postos || [];
+      try {
+         const response = await fetch(`${API_URL}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(loginForm)
+         });
 
-  return (
-    <AnimatePresence mode='wait'>
-      {view === 'landing' && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="premium-container" style={{ justifyContent: 'center' }}>
-        <img src="/logo_stae.svg" width="80" style={{ margin: '0 auto 32px', display: 'block' }}/>
-        <div style={{ textAlign: 'center', marginBottom: 40 }}>
-           <h1 className="gold-gradient-text" style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.3 }}>SECRETARIADO TÉCNICO DE ADMINISTRAÇÃO ELEITORAL</h1>
-           <p style={{ opacity: 0.6, fontSize: 12, fontWeight: 700, letterSpacing: 1, marginTop: 12 }}>DIRECÇÃO PROVINCIAL DE SOFALA | 2026</p>
-        </div>
-        <div style={{ display: 'grid', gap: 16 }}>
-          <button className="glass-card" style={{ padding: 24, textAlign: 'left', border: '2px solid #4ade80', display: 'flex', gap: 20 }} onClick={() => setView('role-selection')}><Briefcase color="#4ade80"/> <div><h3 style={{ margin: 0 }}>Candidatagem Oficial</h3><p style={{ opacity: 0.4, fontSize: 11, margin: '4px 0 0' }}>Novo Ciclo Eleitoral</p></div></button>
-          <button className="glass-card" style={{ padding: 24, textAlign: 'left', display: 'flex', gap: 20 }} onClick={() => setView('login')}><User color="#d4a30d"/> <div><h3 style={{ margin: 0 }}>Portal do Candidato</h3><p style={{ opacity: 0.4, fontSize: 11, margin: '4px 0 0' }}>Gestão de Perfil</p></div></button>
-        </div>
-      </motion.div>}
+         if (response.ok) {
+            const data = await response.json();
+            setUser(data.user);
+            localStorage.setItem('stae_user', JSON.stringify(data.user));
+            carregarDadosUtilizador(data.user.id);
+            setView('dashboard');
+         } else {
+            alert('Credenciais inválidas');
+         }
+      } catch (error) {
+         console.error('Erro no login:', error);
+         alert('Erro no servidor');
+      } finally {
+         setLoading(false);
+      }
+   };
 
-      {view === 'role-selection' && <div className="premium-container" style={{ justifyContent: 'center' }}>
-         <div style={{ textAlign: 'center', marginBottom: 32 }}><h2 className="gold-gradient-text" style={{ fontSize: 22, fontWeight: 900 }}>FUNÇÃO PRETENDIDA</h2><p style={{ opacity: 0.5 }}>Selecione o seu papel no evento de 2026.</p></div>
-         <div style={{ display: 'grid', gap: 10 }}>
-            {['MMV - Membro de Mesa de Voto', 'Brigadista Provincial', 'Agente de Educação Cívica', 'Supervisor de Campo'].map(role => (
-              <button key={role} className="glass-card" style={{ padding: 20, textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} onClick={() => { setRegForm({...regForm, categoria: role}); setView('geo-selection'); }}><span>{role}</span><ChevronRight size={18} color="#d4a30d"/></button>
+   const handleRegistro = async (e) => {
+      e.preventDefault();
+      setLoading(true);
+
+      try {
+         const response = await fetch(`${API_URL}/api/auth/registro`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(registroForm)
+         });
+
+         if (response.ok) {
+            const data = await response.json();
+            alert('Registro realizado com sucesso! Faça login para continuar.');
+            setView('login');
+            setRegistroForm({
+               email: '',
+               password: '',
+               nome_completo: '',
+               nuit: '',
+               contacto: '',
+               genero: 'Masculino'
+            });
+         } else {
+            alert('Erro no registro');
+         }
+      } catch (error) {
+         console.error('Erro no registro:', error);
+         alert('Erro no servidor');
+      } finally {
+         setLoading(false);
+      }
+   };
+
+   const handleLogout = () => {
+      setUser(null);
+      setCandidatura(null);
+      setNotificacoes([]);
+      localStorage.removeItem('stae_user');
+      setView('home');
+   };
+
+   const marcarNotificacaoComoLida = async (id) => {
+      try {
+         await fetch(`${API_URL}/api/notificacoes/${id}/marcar-lida`, {
+            method: 'POST'
+         });
+
+         setNotificacoes(notificacoes.map(n =>
+            n.id === id ? { ...n, lida: true } : n
+         ));
+      } catch (error) {
+         console.error('Erro ao marcar notificação como lida:', error);
+      }
+   };
+
+   const handleSubmeterCandidatura = async () => {
+      if (!user) {
+         alert('Precisa estar autenticado para submeter candidatura');
+         return;
+      }
+
+      if (!submeterForm.documento_bi || !submeterForm.documento_certificado) {
+         alert('Por favor, carregue todos os documentos obrigatórios');
+         return;
+      }
+
+      setLoading(true);
+      try {
+         const formData = new FormData();
+         formData.append('utilizador_id', user.id);
+         formData.append('categoria_id', submeterForm.categoria_id);
+         formData.append('provincia_actuacao_id', submeterForm.provincia_actuacao_id);
+         formData.append('distrito_actuacao_id', submeterForm.distrito_actuacao_id || '');
+         formData.append('posto_actuacao_id', submeterForm.posto_actuacao_id || '');
+         formData.append('localidade_actuacao_id', submeterForm.localidade_actuacao_id || '');
+         formData.append('observacoes', submeterForm.observacoes);
+         formData.append('documento_bi', submeterForm.documento_bi);
+         formData.append('documento_certificado', submeterForm.documento_certificado);
+
+         const response = await fetch(`${API_URL}/api/candidaturas/completa`, {
+            method: 'POST',
+            body: formData
+         });
+
+         if (response.ok) {
+            const data = await response.json();
+            alert('Candidatura submetida com sucesso!');
+            setCandidatura(data.candidatura);
+            setView('dashboard');
+            setSubmeterForm({
+               categoria_id: '',
+               provincia_actuacao_id: '',
+               distrito_actuacao_id: '',
+               posto_actuacao_id: '',
+               localidade_actuacao_id: '',
+               documento_bi: null,
+               documento_certificado: null,
+               observacoes: ''
+            });
+         } else {
+            const errorData = await response.json();
+            alert(`Erro: ${errorData.error || 'Erro ao submeter candidatura'}`);
+         }
+      } catch (error) {
+         console.error('Erro ao submeter candidatura:', error);
+         alert('Erro ao submeter candidatura');
+      } finally {
+         setLoading(false);
+      }
+   };
+
+   // Componentes de visualização
+   const HomeView = () => (
+      <motion.div
+         initial={{ opacity: 0, y: 20 }}
+         animate={{ opacity: 1, y: 0 }}
+         style={styles.container}
+      >
+         <div style={styles.header}>
+            <img src="/logo_stae.svg" alt="STAE Logo" style={styles.logo} />
+            <h1 style={styles.title}>STAE SOFALA</h1>
+            <p style={styles.subtitle}>Sistema de Gestão Eleitoral 2026</p>
+         </div>
+
+         <div style={styles.cardGrid}>
+            <button style={styles.card} onClick={() => setView('login')}>
+               <div style={styles.cardIcon}>
+                  <LogIn size={24} />
+               </div>
+               <h3 style={styles.cardTitle}>Entrar</h3>
+               <p style={styles.cardDescription}>Aceder à minha conta</p>
+            </button>
+
+            <button style={styles.card} onClick={() => setView('registro')}>
+               <div style={styles.cardIcon}>
+                  <UserPlus size={24} />
+               </div>
+               <h3 style={styles.cardTitle}>Registar</h3>
+               <p style={styles.cardDescription}>Criar nova conta</p>
+            </button>
+
+            <button style={styles.card} onClick={() => setView('info')}>
+               <div style={styles.cardIcon}>
+                  <BookOpen size={24} />
+               </div>
+               <h3 style={styles.cardTitle}>Informações</h3>
+               <p style={styles.cardDescription}>Sobre o processo</p>
+            </button>
+         </div>
+
+         <div style={styles.footer}>
+            <p style={styles.footerText}>Secretariado Técnico de Administração Eleitoral</p>
+            <p style={styles.footerSubtext}>Província de Sofala - 2026</p>
+         </div>
+      </motion.div>
+   );
+
+   const LoginView = () => (
+      <motion.div
+         initial={{ opacity: 0, x: 20 }}
+         animate={{ opacity: 1, x: 0 }}
+         style={styles.container}
+      >
+         <button style={styles.backButton} onClick={() => setView('home')}>
+            ← Voltar
+         </button>
+
+         <div style={styles.formContainer}>
+            <h2 style={styles.formTitle}>Entrar na Conta</h2>
+
+            <form onSubmit={handleLogin}>
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Email</label>
+                  <input
+                     type="email"
+                     style={styles.input}
+                     value={loginForm.email}
+                     onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
+                     required
+                  />
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Password</label>
+                  <input
+                     type="password"
+                     style={styles.input}
+                     value={loginForm.password}
+                     onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                     required
+                  />
+               </div>
+
+               <button
+                  type="submit"
+                  style={styles.primaryButton}
+                  disabled={loading}
+               >
+                  {loading ? 'A processar...' : 'Entrar'}
+               </button>
+            </form>
+
+            <p style={styles.switchText}>
+               Não tem conta?{' '}
+               <button
+                  style={styles.linkButton}
+                  onClick={() => setView('registro')}
+               >
+                  Registar-se
+               </button>
+            </p>
+         </div>
+      </motion.div>
+   );
+
+   const RegistroView = () => (
+      <motion.div
+         initial={{ opacity: 0, x: 20 }}
+         animate={{ opacity: 1, x: 0 }}
+         style={styles.container}
+      >
+         <button style={styles.backButton} onClick={() => setView('home')}>
+            ← Voltar
+         </button>
+
+         <div style={styles.formContainer}>
+            <h2 style={styles.formTitle}>Criar Nova Conta</h2>
+
+            <form onSubmit={handleRegistro}>
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Nome Completo</label>
+                  <input
+                     type="text"
+                     style={styles.input}
+                     value={registroForm.nome_completo}
+                     onChange={(e) => setRegistroForm({ ...registroForm, nome_completo: e.target.value })}
+                     required
+                  />
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>NUIT</label>
+                  <input
+                     type="text"
+                     style={styles.input}
+                     value={registroForm.nuit}
+                     onChange={(e) => setRegistroForm({ ...registroForm, nuit: e.target.value })}
+                     required
+                  />
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Email</label>
+                  <input
+                     type="email"
+                     style={styles.input}
+                     value={registroForm.email}
+                     onChange={(e) => setRegistroForm({ ...registroForm, email: e.target.value })}
+                     required
+                  />
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Contacto</label>
+                  <input
+                     type="tel"
+                     style={styles.input}
+                     value={registroForm.contacto}
+                     onChange={(e) => setRegistroForm({ ...registroForm, contacto: e.target.value })}
+                     required
+                  />
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Género</label>
+                  <select
+                     style={styles.input}
+                     value={registroForm.genero}
+                     onChange={(e) => setRegistroForm({ ...registroForm, genero: e.target.value })}
+                  >
+                     <option value="Masculino">Masculino</option>
+                     <option value="Feminino">Feminino</option>
+                  </select>
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Password</label>
+                  <input
+                     type="password"
+                     style={styles.input}
+                     value={registroForm.password}
+                     onChange={(e) => setRegistroForm({ ...registroForm, password: e.target.value })}
+                     required
+                  />
+               </div>
+
+               <button
+                  type="submit"
+                  style={styles.primaryButton}
+                  disabled={loading}
+               >
+                  {loading ? 'A processar...' : 'Registar'}
+               </button>
+            </form>
+
+            <p style={styles.switchText}>
+               Já tem conta?{' '}
+               <button
+                  style={styles.linkButton}
+                  onClick={() => setView('login')}
+               >
+                  Entrar
+               </button>
+            </p>
+         </div>
+      </motion.div>
+   );
+
+   const DashboardView = () => (
+      <motion.div
+         initial={{ opacity: 0, y: 20 }}
+         animate={{ opacity: 1, y: 0 }}
+         style={styles.container}
+      >
+         {/* Header */}
+         <div style={styles.dashboardHeader}>
+            <div>
+               <h2 style={styles.dashboardTitle}>Minha Conta</h2>
+               <p style={styles.dashboardSubtitle}>Bem-vindo, {user?.nome_completo || user?.email}</p>
+            </div>
+            <button style={styles.logoutButton} onClick={handleLogout}>
+               Sair
+            </button>
+         </div>
+
+         {/* Menu */}
+         <div style={styles.menu}>
+            <button
+               style={styles.menuButton}
+               onClick={() => setView('perfil')}
+            >
+               <User size={20} />
+               <span>Meu Perfil</span>
+               <ChevronRight size={16} />
+            </button>
+
+            <button
+               style={styles.menuButton}
+               onClick={() => setView('candidatura')}
+            >
+               <FileText size={20} />
+               <span>Minha Candidatura</span>
+               <ChevronRight size={16} />
+            </button>
+
+            {!candidatura && (
+               <button
+                  style={styles.menuButton}
+                  onClick={() => setView('submeter-candidatura')}
+               >
+                  <Plus size={20} />
+                  <span>Submeter Candidatura</span>
+                  <ChevronRight size={16} />
+               </button>
+            )}
+
+            <button
+               style={styles.menuButton}
+               onClick={() => setView('notificacoes')}
+            >
+               <Bell size={20} />
+               <span>Notificações</span>
+               {notificacoes.filter(n => !n.lida).length > 0 && (
+                  <span style={styles.badge}>
+                     {notificacoes.filter(n => !n.lida).length}
+                  </span>
+               )}
+               <ChevronRight size={16} />
+            </button>
+         </div>
+
+         {/* Status da Candidatura */}
+         {candidatura && (
+            <div style={styles.statusCard}>
+               <h3 style={styles.statusTitle}>Status da Candidatura</h3>
+               <div style={styles.statusInfo}>
+                  <div>
+                     <p style={styles.statusLabel}>Estado</p>
+                     <p style={{
+                        ...styles.statusValue,
+                        color: candidatura.estado_geral === 'aprovado' ? '#10b981' :
+                           candidatura.estado_geral === 'reprovado' ? '#ef4444' : '#d4a30d'
+                     }}>
+                        {candidatura.estado_geral || 'Pendente'}
+                     </p>
+                  </div>
+                  <div>
+                     <p style={styles.statusLabel}>Fase</p>
+                     <p style={styles.statusValue}>{candidatura.fase_atual || 'Registro'}</p>
+                  </div>
+               </div>
+            </div>
+         )}
+
+         {/* Últimas Notificações */}
+         <div style={styles.section}>
+            <h3 style={styles.sectionTitle}>Últimas Notificações</h3>
+            {notificacoes.slice(0, 3).map((notificacao) => (
+               <div
+                  key={notificacao.id}
+                  style={{
+                     ...styles.notificationCard,
+                     backgroundColor: notificacao.lida ? '#1e293b' : '#0f172a'
+                  }}
+                  onClick={() => marcarNotificacaoComoLida(notificacao.id)}
+               >
+                  <div style={styles.notificationHeader}>
+                     <h4 style={styles.notificationTitle}>{notificacao.titulo}</h4>
+                     {!notificacao.lida && <div style={styles.unreadDot} />}
+                  </div>
+                  <p style={styles.notificationMessage}>{notificacao.mensagem}</p>
+                  <p style={styles.notificationTime}>
+                     {new Date(notificacao.data_envio).toLocaleDateString('pt-PT')}
+                  </p>
+               </div>
             ))}
-            <button style={{ background: 'none', border: 'none', color: '#fff', opacity: 0.5, marginTop: 24 }} onClick={() => setView('landing')}>Voltar</button>
          </div>
-      </div>}
+      </motion.div>
+   );
 
-      {view === 'geo-selection' && <div className="premium-container">
-         <div style={{ marginBottom: 32 }}><h2 className="gold-gradient-text" style={{ fontSize: 24, fontWeight: 900 }}>CIRCUNSCRIÇÃO ELEITORAL</h2><p style={{ opacity: 0.5 }}>Pauta Administrativa de Sofala.</p></div>
-         <div className="glass-card" style={{ display: 'grid', gap: 20 }}>
-            <div><p style={{ fontSize: 11, fontWeight: 800, color: '#d4a30d', marginBottom: 8 }}>PROVÍNCIA</p><select className="stae-input" value={regForm.provincia} readOnly disabled><option>Sofala</option></select></div>
-            <div><p style={{ fontSize: 11, fontWeight: 800, color: '#d4a30d', marginBottom: 8 }}>DISTRITO</p><select className="stae-input" value={regForm.distrito} onChange={e => setRegForm({...regForm, distrito: e.target.value, posto: ''})}><option value="">Selecione...</option>{distritosDisponiveis.map(d => <option key={d.name} value={d.name}>{d.name}</option>)}</select></div>
-            <div><p style={{ fontSize: 11, fontWeight: 800, color: '#d4a30d', marginBottom: 8 }}>POSTO ADMINISTRATIVO</p><select className="stae-input" value={regForm.posto} disabled={!regForm.distrito} onChange={e => setRegForm({...regForm, posto: e.target.value})}><option value="">Selecione o Posto...</option>{postosDisponiveis.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
-            <button className="stae-button" style={{ marginTop: 20 }} disabled={!regForm.posto} onClick={() => setView('personal-data')}>Próximo: Dados Pessoais</button>
+   const CandidaturaView = () => (
+      <motion.div
+         initial={{ opacity: 0, x: 20 }}
+         animate={{ opacity: 1, x: 0 }}
+         style={styles.container}
+      >
+         <button style={styles.backButton} onClick={() => setView('dashboard')}>
+            ← Voltar
+         </button>
+
+         <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>Minha Candidatura</h2>
+
+            {candidatura ? (
+               <div style={styles.detailCard}>
+                  <div style={styles.detailRow}>
+                     <span style={styles.detailLabel}>Estado:</span>
+                     <span style={{
+                        ...styles.detailValue,
+                        color: candidatura.estado_geral === 'aprovado' ? '#10b981' :
+                           candidatura.estado_geral === 'reprovado' ? '#ef4444' : '#d4a30d'
+                     }}>
+                        {candidatura.estado_geral || 'Pendente'}
+                     </span>
+                  </div>
+
+                  <div style={styles.detailRow}>
+                     <span style={styles.detailLabel}>Fase Actual:</span>
+                     <span style={styles.detailValue}>{candidatura.fase_atual || 'Registro'}</span>
+                  </div>
+
+                  <div style={styles.detailRow}>
+                     <span style={styles.detailLabel}>Categoria:</span>
+                     <span style={styles.detailValue}>{candidatura.categoria_nome || 'MMV'}</span>
+                  </div>
+
+                  <div style={styles.detailRow}>
+                     <span style={styles.detailLabel}>Documentação BI:</span>
+                     <span style={{
+                        ...styles.detailValue,
+                        color: candidatura.documento_bi_estado === 'aprovado' ? '#10b981' :
+                           candidatura.documento_bi_estado === 'reprovado' ? '#ef4444' : '#d4a30d'
+                     }}>
+                        {candidatura.documento_bi_estado || 'Pendente'}
+                     </span>
+                  </div>
+
+                  <div style={styles.detailRow}>
+                     <span style={styles.detailLabel}>Certificado:</span>
+                     <span style={{
+                        ...styles.detailValue,
+                        color: candidatura.documento_certificado_estado === 'aprovado' ? '#10b981' :
+                           candidatura.documento_certificado_estado === 'reprovado' ? '#ef4444' : '#d4a30d'
+                     }}>
+                        {candidatura.documento_certificado_estado || 'Pendente'}
+                     </span>
+                  </div>
+
+                  <div style={styles.detailRow}>
+                     <span style={styles.detailLabel}>Pontuação:</span>
+                     <span style={styles.detailValue}>{candidatura.pontuacao_documentacao || 0} pontos</span>
+                  </div>
+
+                  <div style={styles.detailRow}>
+                     <span style={styles.detailLabel}>Data de Registo:</span>
+                     <span style={styles.detailValue}>
+                        {new Date(candidatura.criado_em).toLocaleDateString('pt-PT')}
+                     </span>
+                  </div>
+               </div>
+            ) : (
+               <div style={styles.emptyState}>
+                  <FileText size={48} color="#94a3b8" />
+                  <p style={styles.emptyStateText}>Nenhuma candidatura encontrada</p>
+                  <p style={styles.emptyStateSubtext}>Complete o seu perfil para se candidatar</p>
+               </div>
+            )}
          </div>
-      </div>}
+      </motion.div>
+   );
 
-      {view === 'personal-data' && <div className="premium-container">
-         <div style={{ marginBottom: 32 }}><h2 className="gold-gradient-text" style={{ fontSize: 24, fontWeight: 900 }}>DADOS DO CANDIDATO</h2><p style={{ opacity: 0.5 }}>Introduza as suas informações oficiais.</p></div>
-         <div className="glass-card" style={{ display: 'grid', gap: 20 }}>
-            <div><p style={{ fontSize: 11, fontWeight: 800, color: '#d4a30d', marginBottom: 8 }}>NOME COMPLETO</p><input type="text" className="stae-input" placeholder="Conforme o Bilhete de Identidade" value={regForm.nome} onChange={e => setRegForm({...regForm, nome: e.target.value})} /></div>
-            <div style={{ display: 'flex', gap: 16 }}>
-               <div style={{ flex: 1 }}><p style={{ fontSize: 11, fontWeight: 800, color: '#d4a30d', marginBottom: 8 }}>GÉNERO</p><select className="stae-input" value={regForm.genero} onChange={e => setRegForm({...regForm, genero: e.target.value})}><option value="">-</option><option value="M">Masculino</option><option value="F">Feminino</option></select></div>
-               <div style={{ flex: 1 }}><p style={{ fontSize: 11, fontWeight: 800, color: '#d4a30d', marginBottom: 8 }}>NUIT / BI</p><input type="text" className="stae-input" placeholder="Extração Automática" value={regForm.nuit} onChange={e => setRegForm({...regForm, nuit: e.target.value})} /></div>
+   const SubmeterCandidaturaView = () => (
+      <motion.div
+         initial={{ opacity: 0, x: 20 }}
+         animate={{ opacity: 1, x: 0 }}
+         style={styles.container}
+      >
+         <button style={styles.backButton} onClick={() => setView('dashboard')}>
+            ← Voltar
+         </button>
+
+         <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>Submeter Candidatura</h2>
+
+            <div style={styles.formContainer}>
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Categoria *</label>
+                  <select
+                     style={styles.input}
+                     value={submeterForm.categoria_id}
+                     onChange={(e) => setSubmeterForm({ ...submeterForm, categoria_id: e.target.value })}
+                     required
+                  >
+                     <option value="">Selecionar categoria</option>
+                     <option value="mmv">MMV (Membro de Mesa de Voto)</option>
+                     <option value="brigadista">Brigadista</option>
+                     <option value="formador">Formador</option>
+                     <option value="supervisor">Supervisor</option>
+                  </select>
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Província de Actuação *</label>
+                  <select
+                     style={styles.input}
+                     value={submeterForm.provincia_actuacao_id}
+                     onChange={(e) => setSubmeterForm({ ...submeterForm, provincia_actuacao_id: e.target.value })}
+                     required
+                  >
+                     <option value="">Selecionar província</option>
+                     <option value="sofala">Sofala</option>
+                  </select>
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Documento de Identificação (BI) *</label>
+                  <input
+                     type="file"
+                     style={styles.fileInput}
+                     accept=".jpg,.jpeg,.png,.pdf"
+                     onChange={(e) => setSubmeterForm({ ...submeterForm, documento_bi: e.target.files[0] })}
+                     required
+                  />
+                  <p style={styles.fileHelp}>Formatos aceites: JPG, PNG, PDF (máx. 10MB)</p>
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Certificado ou Documento de Qualificação *</label>
+                  <input
+                     type="file"
+                     style={styles.fileInput}
+                     accept=".jpg,.jpeg,.png,.pdf"
+                     onChange={(e) => setSubmeterForm({ ...submeterForm, documento_certificado: e.target.files[0] })}
+                     required
+                  />
+                  <p style={styles.fileHelp}>Formatos aceites: JPG, PNG, PDF (máx. 10MB)</p>
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Observações</label>
+                  <textarea
+                     style={styles.textarea}
+                     value={submeterForm.observacoes}
+                     onChange={(e) => setSubmeterForm({ ...submeterForm, observacoes: e.target.value })}
+                     placeholder="Informações adicionais sobre a sua candidatura"
+                     rows="4"
+                  />
+               </div>
+
+               <button
+                  style={styles.primaryButton}
+                  onClick={handleSubmeterCandidatura}
+                  disabled={loading}
+               >
+                  {loading ? 'A processar...' : 'Submeter Candidatura'}
+               </button>
             </div>
-            <button className="stae-button" style={{ marginTop: 20 }} disabled={!regForm.nome || !regForm.genero} onClick={() => setView('cert-upload')}>Próximo: Documentação</button>
          </div>
-      </div>}
+      </motion.div>
+   );
 
-      {view === 'cert-upload' && <div className="premium-container" style={{ justifyContent: 'center' }}>
-         <div style={{ textAlign: 'center', marginBottom: 32 }}><h2 className="gold-gradient-text" style={{ fontSize: 20, fontWeight: 900 }}>PROVA DE HABILITAÇÕES</h2><p style={{ opacity: 0.4 }}>Anexe o Certificado literário oficial.</p></div>
-         <div className="glass-card" style={{ textAlign: 'center', padding: '40px 24px', border: certificatesAttached ? '2px solid #4ade80' : '2px dashed #d4a30d' }}>
-            <Upload size={48} color={certificatesAttached ? "#4ade80" : "#d4a30d"} style={{ marginBottom: 20 }} />
-            <p style={{ marginBottom: 24 }}>{certificatesAttached ? 'Documento Recebido' : 'Clique para carregar Foto do Diploma'}</p>
-            <label className="stae-button" style={{ cursor: 'pointer' }}>{certificatesAttached ? 'Trocar' : 'Carregar'}<input type="file" onChange={() => setCertificatesAttached(true)} style={{ display: 'none' }} /></label>
-            {certificatesAttached && <button className="stae-button" style={{ marginTop: 20, background: '#1e293b' }} onClick={() => setView('id-scanner')}>Próximo: Validação Biométrica</button>}
-         </div>
-      </div>}
+   // Renderização principal
+   return (
+      <div style={styles.app}>
+         {view === 'home' && <HomeView />}
+         {view === 'login' && <LoginView />}
+         {view === 'registro' && <RegistroView />}
+         {view === 'submeter-candidatura' && <SubmeterCandidaturaView />}
+         {view === 'dashboard' && <DashboardView />}
+         {view === 'candidatura' && <CandidaturaView />}
+         {view === 'notificacoes' && (
+            <motion.div
+               initial={{ opacity: 0, x: 20 }}
+               animate={{ opacity: 1, x: 0 }}
+               style={styles.container}
+            >
+               <button style={styles.backButton} onClick={() => setView('dashboard')}>
+                  ← Voltar
+               </button>
 
-      {view === 'id-scanner' && <div className="premium-container" style={{ justifyContent: 'center' }}><div className="glass-card" style={{ textAlign: 'center' }}><h2 className="gold-gradient-text" style={{ fontSize: 22, marginBottom: 16 }}>VALIDAÇÃO DOCUMENTAL</h2><p style={{ opacity: 0.6, marginBottom: 32 }}>Capture o seu BI de Moçambique agora.</p><label className="stae-button" style={{ display: 'flex', gap: 12, justifyContent: 'center', cursor: 'pointer' }}><Camera /> Scanner Oficial 2026<input type="file" accept="image/*" onChange={(e) => { 
-        const file = e.target.files[0];
-        const reader = new FileReader();
-        reader.onload = (re) => { setRawImage(re.target.result); setView('crop'); };
-        reader.readAsDataURL(file);
-      }} style={{ display: 'none' }} /></label></div></div>}
-      
-      {view === 'crop' && <FlexibleCropView rawImage={rawImage} onCancel={() => setView('id-scanner')} onFinalize={(photo) => { setExtractedPhoto(photo); setView('portal'); }} />}
+               <div style={styles.section}>
+                  <h2 style={styles.sectionTitle}>Todas as Notificações</h2>
 
-      {view === 'portal' && <div className="premium-container" style={{ justifyContent: 'center' }}>
-         <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} style={{ background: 'white', borderRadius: 16, overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.5)', border: '1px solid #ddd' }}>
-            <div style={{ background: '#001f42', padding: 16, textAlign: 'center' }}><img src="/logo_stae.svg" width="36" /><p style={{ color: 'white', fontSize: 9, fontWeight: 900, marginTop: 8 }}>REPÚBLICA DE MOÇAMBIQUE</p><p style={{ color: '#d4a30d', fontSize: 10, fontWeight: 900 }}>SECRETARIADO TÉCNICO DE ADMINISTRAÇÃO ELEITORAL</p></div>
-            <div style={{ padding: 24, color: '#333', textAlign: 'center' }}>
-               <h2 style={{ fontSize: 12, color: '#001f42', fontWeight: 900 }}>{regForm.evento}</h2>
-               <p style={{ fontSize: 10, color: '#d4a30d', fontWeight: 800, marginBottom: 16 }}>{regForm.categoria.toUpperCase()}</p>
-               <img src={extractedPhoto} width="100" style={{ borderRadius: 8, border: '1px solid #ccc', padding: 4, marginBottom: 12 }} />
-               <h3 style={{ fontSize: 18, color: '#000', marginBottom: 2 }}>{regForm.nome || 'CANDIDATO VALIDADO'}</h3>
-               <p style={{ fontSize: 11, color: '#666' }}>{regForm.distrito} | {regForm.posto}</p>
-               <div style={{ margin: '16px 0', border: '1px dashed #ccc', padding: 16, display: 'flex', justifyContent: 'center' }}><img src={`https://api.qrserver.com/v1/create-qr-code/?data=${regForm.nuit}&size=100x100`} width="100" /></div>
-            </div>
-            <div style={{ background: '#f8fafc', padding: 14, textAlign: 'center' }}><button className="stae-button" onClick={() => setView('landing')} style={{ background: '#001f42', fontSize: 12 }}>FECHAR PROCESSO</button></div>
-         </motion.div>
-      </div>}
+                  {notificacoes.length > 0 ? (
+                     notificacoes.map((notificacao) => (
+                        <div
+                           key={notificacao.id}
+                           style={{
+                              ...styles.notificationCard,
+                              backgroundColor: notificacao.lida ? '#1e293b' : '#0f172a'
+                           }}
+                           onClick={() => marcarNotificacaoComoLida(notificacao.id)}
+                        >
+                           <div style={styles.notificationHeader}>
+                              <h4 style={styles.notificationTitle}>{notificacao.titulo}</h4>
+                              {!notificacao.lida && <div style={styles.unreadDot} />}
+                           </div>
+                           <p style={styles.notificationMessage}>{notificacao.mensagem}</p>
+                           <p style={styles.notificationTime}>
+                              {new Date(notificacao.data_envio).toLocaleDateString('pt-PT')}
+                           </p>
+                        </div>
+                     ))
+                  ) : (
+                     <div style={styles.emptyState}>
+                        <Bell size={48} color="#94a3b8" />
+                        <p style={styles.emptyStateText}>Nenhuma notificação</p>
+                     </div>
+                  )}
+               </div>
+            </motion.div>
+         )}
+      </div>
+   );
+};
 
-      {view === 'login' && <div className="premium-container" style={{ justifyContent: 'center' }}><div className="glass-card"><h2 style={{ textAlign: 'center', marginBottom: 24 }}>Acesso Seguro</h2><input type="text" className="stae-input" placeholder="Nº de Documento" /><button className="stae-button" style={{ marginTop: 16 }} onClick={() => setView('landing')}>Voltar</button></div></div>}
-    </AnimatePresence>
-  );
-}
+// Estilos
+const styles = {
+   app: {
+      minHeight: '100vh',
+      backgroundColor: '#0f172a',
+      color: 'white',
+      fontFamily: '"Inter", sans-serif'
+   },
+   container: {
+      padding: '20px',
+      maxWidth: '500px',
+      margin: '0 auto'
+   },
+   header: {
+      textAlign: 'center',
+      marginBottom: '40px'
+   },
+   logo: {
+      width: '80px',
+      marginBottom: '16px'
+   },
+   title: {
+      fontSize: '24px',
+      fontWeight: 'bold',
+      color: '#d4a30d',
+      margin: '0 0 8px 0'
+   },
+   subtitle: {
+      fontSize: '14px',
+      color: '#94a3b8',
+      margin: 0
+   },
+   cardGrid: {
+      display: 'grid',
+      gridTemplateColumns: '1fr',
+      gap: '16px',
+      marginBottom: '40px'
+   },
+   card: {
+      backgroundColor: '#1e293b',
+      border: '1px solid #334155',
+      borderRadius: '12px',
+      padding: '20px',
+      textAlign: 'center',
+      cursor: 'pointer',
+      border: 'none',
+      color: 'white'
+   },
+   cardIcon: {
+      width: '48px',
+      height: '48px',
+      backgroundColor: '#d4a30d20',
+      borderRadius: '50%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      margin: '0 auto 16px'
+   },
+   cardTitle: {
+      fontSize: '18px',
+      fontWeight: '600',
+      margin: '0 0 8px 0'
+   },
+   cardDescription: {
+      fontSize: '14px',
+      color: '#94a3b8',
+      margin: 0
+   },
+   footer: {
+      textAlign: 'center',
+      paddingTop: '20px',
+      borderTop: '1px solid #334155'
+   },
+   footerText: {
+      fontSize: '12px',
+      color: '#94a3b8',
+      margin: '0 0 4px 0'
+   },
+   footerSubtext: {
+      fontSize: '11px',
+      color: '#64748b',
+      margin: 0
+   },
+   backButton: {
+      backgroundColor: 'transparent',
+      border: 'none',
+      color: '#d4a30d',
+      fontSize: '14px',
+      cursor: 'pointer',
+      marginBottom: '20px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '4px'
+   },
+   formContainer: {
+      backgroundColor: '#1e293b',
+      padding: '24px',
+      borderRadius: '12px',
+      border: '1px solid #334155'
+   },
+   formTitle: {
+      fontSize: '20px',
+      fontWeight: '600',
+      margin: '0 0 24px 0',
+      textAlign: 'center'
+   },
+   formGroup: {
+      marginBottom: '16px'
+   },
+   label: {
+      display: 'block',
+      fontSize: '14px',
+      marginBottom: '8px',
+      color: '#94a3b8'
+   },
+   input: {
+      width: '100%',
+      padding: '12px',
+      backgroundColor: '#0f172a',
+      border: '1px solid #334155',
+      borderRadius: '8px',
+      color: 'white',
+      fontSize: '14px',
+      boxSizing: 'border-box'
+   },
+   primaryButton: {
+      width: '100%',
+      padding: '14px',
+      backgroundColor: '#d4a30d',
+      color: '#000',
+      border: 'none',
+      borderRadius: '8px',
+      fontSize: '16px',
+      fontWeight: '600',
+      cursor: 'pointer',
+      marginTop: '8px'
+   },
+   switchText: {
+      textAlign: 'center',
+      marginTop: '20px',
+      fontSize: '14px',
+      color: '#94a3b8'
+   },
+   linkButton: {
+      backgroundColor: 'transparent',
+      border: 'none',
+      color: '#d4a30d',
+      cursor: 'pointer',
+      fontSize: '14px',
+      fontWeight: '500'
+   },
+   dashboardHeader: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: '24px'
+   },
+   dashboardTitle: {
+      fontSize: '20px',
+      fontWeight: '600',
+      margin: '0 0 4px 0'
+   },
+   dashboardSubtitle: {
+      fontSize: '14px',
+      color: '#94a3b8',
+      margin: 0
+   },
+   logoutButton: {
+      padding: '8px 16px',
+      backgroundColor: '#ef444420',
+      color: '#ef4444',
+      border: '1px solid #ef4444',
+      borderRadius: '8px',
+      fontSize: '14px',
+      cursor: 'pointer'
+   },
+   menu: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '8px',
+      marginBottom: '24px'
+   },
+   menuButton: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: '16px',
+      backgroundColor: '#1e293b',
+      border: '1px solid #334155',
+      borderRadius: '8px',
+      color: 'white',
+      fontSize: '16px',
+      cursor: 'pointer',
+      border: 'none'
+   },
+   badge: {
+      backgroundColor: '#ef4444',
+      color: 'white',
+      fontSize: '12px',
+      padding: '2px 8px',
+      borderRadius: '12px'
+   },
+   statusCard: {
+      backgroundColor: '#1e293b',
+      padding: '20px',
+      borderRadius: '12px',
+      border: '1px solid #334155',
+      marginBottom: '24px'
+   },
+   statusTitle: {
+      fontSize: '16px',
+      fontWeight: '600',
+      margin: '0 0 16px 0'
+   },
+   statusInfo: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: '16px'
+   },
+   statusLabel: {
+      fontSize: '12px',
+      color: '#94a3b8',
+      margin: '0 0 4px 0'
+   },
+   statusValue: {
+      fontSize: '16px',
+      fontWeight: '600',
+      margin: 0
+   },
+   section: {
+      marginBottom: '24px'
+   },
+   sectionTitle: {
+      fontSize: '18px',
+      fontWeight: '600',
+      margin: '0 0 16px 0'
+   },
+   notificationCard: {
+      backgroundColor: '#1e293b',
+      padding: '16px',
+      borderRadius: '8px',
+      marginBottom: '12px',
+      cursor: 'pointer'
+   },
+   notificationHeader: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: '8px'
+   },
+   notificationTitle: {
+      fontSize: '14px',
+      fontWeight: '600',
+      margin: 0
+   },
+   unreadDot: {
+      width: '8px',
+      height: '8px',
+      backgroundColor: '#d4a30d',
+      borderRadius: '50%'
+   },
+   notificationMessage: {
+      fontSize: '13px',
+      color: '#94a3b8',
+      margin: '0 0 8px 0'
+   },
+   notificationTime: {
+      fontSize: '11px',
+      color: '#64748b',
+      margin: 0
+   },
+   detailCard: {
+      backgroundColor: '#1e293b',
+      padding: '20px',
+      borderRadius: '12px',
+      border: '1px solid #334155'
+   },
+   detailRow: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: '12px 0',
+      borderBottom: '1px solid #334155'
+   },
+   detailLabel: {
+      fontSize: '14px',
+      color: '#94a3b8'
+   },
+   detailValue: {
+      fontSize: '14px',
+      fontWeight: '500'
+   },
+   emptyState: {
+      textAlign: 'center',
+      padding: '40px 20px'
+   },
+   emptyStateText: {
+      fontSize: '16px',
+      color: '#94a3b8',
+      margin: '16px 0 8px 0'
+   },
+   emptyStateSubtext: {
+      fontSize: '14px',
+      color: '#64748b',
+      margin: 0
+   },
+   // New styles for candidatura submission
+   fileInput: {
+      width: '100%',
+      padding: '12px',
+      backgroundColor: '#0f172a',
+      border: '1px solid #334155',
+      borderRadius: '8px',
+      color: 'white',
+      fontSize: '14px',
+      boxSizing: 'border-box'
+   },
+   fileHelp: {
+      fontSize: '12px',
+      color: '#64748b',
+      margin: '4px 0 0 0'
+   },
+   textarea: {
+      width: '100%',
+      padding: '12px',
+      backgroundColor: '#0f172a',
+      border: '1px solid #334155',
+      borderRadius: '8px',
+      color: 'white',
+      fontSize: '14px',
+      fontFamily: 'inherit',
+      resize: 'vertical',
+      minHeight: '100px',
+      boxSizing: 'border-box'
+   }
+};
+
+export default App;

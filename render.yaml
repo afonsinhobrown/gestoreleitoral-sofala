@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: stae-api-sofala
+    runtime: node
+    region: frankfurt
+    buildCommand: cd server && npm install
+    startCommand: cd server && npm start
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+    healthCheckPath: /api/candidates
+    autoDeploy: true
