@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 -- 3. Eventos e Candidaturas
 CREATE TABLE IF NOT EXISTS public.events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name TEXT NOT NULL,
+    name TEXT UNIQUE NOT NULL,
     year INTEGER NOT NULL
 );
 
