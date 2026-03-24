@@ -99,8 +99,35 @@ CREATE TABLE IF NOT EXISTS public.candidaturas (
     documento_certificado_estado TEXT DEFAULT 'pendente',
     documento_outros_url TEXT,
     
+    -- Critérios de avaliação documental
+    criterio_validade_bi INTEGER DEFAULT 0, -- 0-10
+    criterio_validade_certificado INTEGER DEFAULT 0, -- 0-10
+    criterio_legibilidade INTEGER DEFAULT 0, -- 0-10
+    criterio_completude INTEGER DEFAULT 0, -- 0-10
+    criterio_autenticidade INTEGER DEFAULT 0, -- 0-10
+    pontuacao_documentacao INTEGER DEFAULT 0, -- 0-100
+    motivo_reprovacao TEXT,
+    
+    -- Entrevista (não obrigatória)
+    entrevista_realizada BOOLEAN DEFAULT FALSE,
+    data_entrevista TIMESTAMP WITH TIME ZONE,
+    entrevistador_id UUID REFERENCES public.utilizadores(id),
+    pontuacao_entrevista INTEGER DEFAULT 0, -- 0-100
+    observacoes_entrevista TEXT,
+    
+    -- Critérios de avaliação na entrevista
+    criterio_comunicacao INTEGER DEFAULT 0, -- 0-10
+    criterio_conhecimento INTEGER DEFAULT 0, -- 0-10
+    criterio_atitude INTEGER DEFAULT 0, -- 0-10
+    criterio_experiencia INTEGER DEFAULT 0, -- 0-10
+    criterio_motivacao INTEGER DEFAULT 0, -- 0-10
+    
+    -- Avaliação final
+    pontuacao_final INTEGER DEFAULT 0, -- 0-100 (média ponderada)
+    resultado_final TEXT DEFAULT 'pendente', -- pendente, aprovado, reprovado, em_entrevista
+    recomendacoes TEXT,
+    
     observacoes TEXT,
-    pontuacao_documentacao INTEGER DEFAULT 0,
     
     criado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     actualizado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP

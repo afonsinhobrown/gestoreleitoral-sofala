@@ -7,17 +7,47 @@ import {
   Calendar, Clock, MapPin, Mail, Phone, Check, X
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const App = () => {
   const [view, setView] = useState('dashboard');
   const [candidaturas, setCandidaturas] = useState([]);
   const [turmas, setTurmas] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [categorias, setCategorias] = useState([]);
+  const [provincias, setProvincias] = useState([]);
+  const [distritos, setDistritos] = useState([]);
+  const [centros, setCentros] = useState([]);
+  const [processos, setProcessos] = useState([]);
+  const [formadores, setFormadores] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [selectedCandidatura, setSelectedCandidatura] = useState(null);
   const [filtroEstado, setFiltroEstado] = useState('todos');
+  const [notificacoesLista, setNotificacoesLista] = useState([]);
+  const [relatoriosDados, setRelatoriosDados] = useState(null);
   const [showAvaliacaoModal, setShowAvaliacaoModal] = useState(false);
+  const [showEntrevistaModal, setShowEntrevistaModal] = useState(false);
   const [showRegistroPresencialModal, setShowRegistroPresencialModal] = useState(false);
+  const [showPautaModal, setShowPautaModal] = useState(false);
+  const [selectedTurmaParaPauta, setSelectedTurmaParaPauta] = useState(null);
+  const [formandosPauta, setFormandosPauta] = useState([]);
+  const [showNovaTurmaModal, setShowNovaTurmaModal] = useState(false);
+  const [showDetalhesTurmaModal, setShowDetalhesTurmaModal] = useState(false);
+  const [turmaDetalhesSelecionada, setTurmaDetalhesSelecionada] = useState(null);
+  const [showDistribuirModal, setShowDistribuirModal] = useState(false);
+  const [turmaDistribuicaoSelecionada, setTurmaDistribuicaoSelecionada] = useState(null);
+  const [candidatosDisponiveis, setCandidatosDisponiveis] = useState([]);
+  const [candidatosSelecionados, setCandidatosSelecionados] = useState([]);
+  const [novaTurmaForm, setNovaTurmaForm] = useState({
+    nome: '', codigo: '', processo_id: '', centro_id: '', categoria_id: '',
+    data_inicio: '', data_fim: '', horario: '', capacidade_maxima: 30,
+    formador_principal_id: '', formador_auxiliar_id: ''
+  });
+  const [showNovaNotificacaoModal, setShowNovaNotificacaoModal] = useState(false);
+  const [novaNotificacaoForm, setNovaNotificacaoForm] = useState({
+    publico_alvo: 'pendentes',
+    titulo: 'STAE INFORMA',
+    mensagem: ''
+  });
   const [avaliacaoForm, setAvaliacaoForm] = useState({
     documento_bi_estado: 'aprovado',
     documento_certificado_estado: 'aprovado',
@@ -28,6 +58,19 @@ const App = () => {
     criterio_autenticidade: 10,
     motivo_reprovacao: '',
     observacoes: ''
+  });
+  const [entrevistaForm, setEntrevistaForm] = useState({
+    entrevista_realizada: true,
+    data_entrevista: new Date().toISOString().split('T')[0],
+    entrevistador_id: 'admin', // Em produção, usar ID do utilizador logado
+    pontuacao_entrevista: 0,
+    observacoes_entrevista: '',
+    criterio_comunicacao: 0,
+    criterio_conhecimento: 0,
+    criterio_atitude: 0,
+    criterio_experiencia: 0,
+    criterio_motivacao: 0,
+    recomendacoes: ''
   });
   const [registroPresencialForm, setRegistroPresencialForm] = useState({
     nome_completo: '',
@@ -49,29 +92,191 @@ const App = () => {
 
   useEffect(() => {
     carregarDados();
-  }, []);
-
-  const carregarDados = async () => {
-    setLoading(true);
+  }, []);  const carregarDados = async () => {
     try {
-      const [candidaturasRes, turmasRes] = await Promise.all([
-        fetch(`${API_URL}/api/candidaturas`),
-        fetch(`${API_URL}/api/turmas`)
+      setLoading(true);
+      const [candRes, turmasRes, catRes, provRes, centrosRes, procRes, formadoresRes, notifRes, relatRes] = await Promise.all([
+        fetch(`${API_URL}/api/candidaturas`).then(r => r.json()),
+        fetch(`${API_URL}/api/turmas`).then(r => r.json()),
+        fetch(`${API_URL}/api/config/categorias`).then(r => r.json()),
+        fetch(`${API_URL}/api/config/provincias`).then(r => r.json()),
+        fetch(`${API_URL}/api/config/centros`).then(r => r.json()),
+        fetch(`${API_URL}/api/config/processos`).then(r => r.json()),
+        fetch(`${API_URL}/api/config/formadores`).then(r => r.json()),
+        fetch(`${API_URL}/api/notificacoes`).then(r => r.json()).catch(() => ({ notificacoes: [] })),
+        fetch(`${API_URL}/api/relatorios/estatisticas`).then(r => r.json()).catch(() => null)
       ]);
 
-      if (candidaturasRes.ok) {
-        const data = await candidaturasRes.json();
-        setCandidaturas(data.candidaturas || []);
-      }
-
-      if (turmasRes.ok) {
-        const data = await turmasRes.json();
-        setTurmas(data.turmas || []);
-      }
+      setCandidaturas(Array.isArray(candRes) ? candRes : (candRes.candidaturas || []));
+      setTurmas(Array.isArray(turmasRes) ? turmasRes : (turmasRes.turmas || []));
+      setCategorias(catRes.categorias || []);
+      setProvincias(provRes.provincias || []);
+      setCentros(centrosRes.centros || []);
+      setProcessos(procRes.processos || []);
+      setFormadores(formadoresRes.formadores || []);
+      setNotificacoesLista(notifRes.notificacoes || []);
+      setRelatoriosDados(relatRes || null);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const carregarDistritos = async (provinciaId) => {
+    if (!provinciaId) return;
+    try {
+      const res = await fetch(`${API_URL}/api/config/distritos/${provinciaId}`);
+      const data = await res.json();
+      setDistritos(data.distritos || []);
+    } catch (error) {
+      console.error('Erro ao carregar distritos:', error);
+    }
+  };
+
+  const abrirModalPauta = async (turma) => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_URL}/api/turmas/${turma.id}`);
+      const data = await res.json();
+      
+      setSelectedTurmaParaPauta(turma);
+      setFormandosPauta(data.formandos.map(f => ({
+        formando_id: f.id,
+        nome_completo: f.nome_completo,
+        presencas: f.presencas || 0,
+        faltas: f.faltas || 0,
+        nota_final: f.nota_final || 0,
+        observacoes: f.observacoes || ''
+      })));
+      setShowPautaModal(true);
+    } catch (error) {
+      console.error('Erro ao carregar turma:', error);
+      alert('Erro ao carregar turma para pauta');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const salvarPauta = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/turmas/${selectedTurmaParaPauta.id}/pauta`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          avaliacoes: formandosPauta, 
+          avaliador_id: 'admin' 
+        })
+      });
+
+      if (response.ok) {
+        alert('✅ Pauta salva com sucesso!\\n[SMS Simulado: Resultados enviados aos formandos]');
+        setShowPautaModal(false);
+        carregarDados();
+      } else {
+        const err = await response.json();
+        alert('Erro: ' + (err.error || 'Erro desconhecido ao salvar pauta'));
+      }
+    } catch (error) {
+      console.error('Erro:', error);
+      alert('Erro ao salvar pauta');
+    }
+  };
+
+  const salvarNovaTurma = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/turmas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(novaTurmaForm)
+      });
+      if (res.ok) {
+        alert("Turma criada com sucesso!");
+        setShowNovaTurmaModal(false);
+        carregarDados();
+      } else {
+        const error = await res.json();
+        alert(error.error || "Erro ao criar turma.");
+      }
+    } catch(e) {
+      console.error(e);
+      alert("Erro ao conectar ao servidor.");
+    }
+  };
+
+  const verDetalhesTurma = (turma) => {
+    setTurmaDetalhesSelecionada(turma);
+    setShowDetalhesTurmaModal(true);
+  };
+
+  const abrirModalDistribuir = (turma) => {
+    setTurmaDistribuicaoSelecionada(turma);
+    // Filtrar candidatos disponíveis
+    const disponiveis = candidaturas.filter(c => 
+      c.categoria_id === turma.categoria_id && 
+      c.estado_geral === 'aprovado' && 
+      c.fase_atual !== 'afectacao' && 
+      c.fase_atual !== 'formacao'
+    );
+    setCandidatosDisponiveis(disponiveis);
+    setCandidatosSelecionados([]);
+    setShowDistribuirModal(true);
+  };
+
+  const alternarSelecaoCandidato = (id) => {
+    setCandidatosSelecionados(prev => 
+      prev.includes(id) ? prev.filter(cId => cId !== id) : [...prev, id]
+    );
+  };
+
+  const salvarDistribuicaoFormandos = async () => {
+    if (candidatosSelecionados.length === 0) return alert("Selecione pelo menos um candidato.");
+    const vagasDisponiveis = turmaDistribuicaoSelecionada.capacidade_maxima - (turmaDistribuicaoSelecionada.vagas_preenchidas || 0);
+    if (candidatosSelecionados.length > vagasDisponiveis) {
+      return alert(`Limite excedido. A turma só tem ${vagasDisponiveis} vagas disponíveis.`);
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/api/turmas/${turmaDistribuicaoSelecionada.id}/distribuir-formandos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ candidatura_ids: candidatosSelecionados })
+      });
+      if (res.ok) {
+        alert("Formandos alocados com sucesso à turma!");
+        setShowDistribuirModal(false);
+        carregarDados();
+      } else {
+        const error = await res.json();
+        alert(error.error || "Erro ao alocar formandos.");
+      }
+    } catch(e) {
+      console.error(e);
+      alert("Erro de servidor.");
+    }
+  };
+
+  const enviarNovaNotificacao = async () => {
+    if (!novaNotificacaoForm.mensagem) return alert("A mensagem não pode estar vazia.");
+    try {
+      const res = await fetch(`${API_URL}/api/notificacoes/enviar-lote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(novaNotificacaoForm)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`Sucesso! ${data.count} notificações SMS enviadas.`);
+        setShowNovaNotificacaoModal(false);
+        setNovaNotificacaoForm({ ...novaNotificacaoForm, mensagem: '' });
+        carregarDados();
+      } else {
+        const err = await res.json();
+        alert(err.error || "Erro ao enviar notificações");
+      }
+    } catch(e) {
+      console.error(e);
+      alert("Erro ao conectar ao servidor.");
     }
   };
 
@@ -94,18 +299,35 @@ const App = () => {
   const avaliarCandidaturaDetalhada = async () => {
     if (!selectedCandidatura) return;
 
+    // Validação de Observação Obrigatória para Reprovações
+    const temReprovacao = 
+      avaliacaoForm.documento_bi_estado === 'reprovado' || 
+      avaliacaoForm.documento_certificado_estado === 'reprovado';
+    
+    if (temReprovacao && !avaliacaoForm.motivo_reprovacao?.trim()) {
+      alert("⚠️ ERRO: Em caso de reprovação de documentos, o campo 'Motivo de Reprovação' é obrigatório.");
+      return;
+    }
+
     try {
       const response = await fetch(`${API_URL}/api/candidaturas/${selectedCandidatura.id}/avaliar-detalhada`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...avaliacaoForm,
-          avaliado_por: 'admin' // Em produção, usar ID do utilizador logado
+          avaliado_por: 'admin'
         })
       });
 
       if (response.ok) {
-        alert('Avaliação realizada com sucesso!');
+        // Simulação de Envio de SMS (Notificação)
+        const statusFinal = (avaliacaoForm.documento_bi_estado === 'aprovado' && 
+                             avaliacaoForm.documento_certificado_estado === 'aprovado') ? 'APROVADA' : 'REPROVADA';
+        
+        console.log(`📡 [SMS SIMULADO] Enviando para: ${selectedCandidatura.nome_completo || 'Candidato'}`);
+        console.log(`📱 MENSAGEM: STAE Informa: A sua candidatura foi ${statusFinal}. ${statusFinal === 'REPROVADA' ? 'Motivo: ' + avaliacaoForm.motivo_reprovacao : 'Aguarde próximas instruções.'}`);
+
+        alert(`✅ Avaliação concluída!\n[SMS Simulado: Candidatura ${statusFinal}]`);
         carregarDados();
         setShowAvaliacaoModal(false);
         setSelectedCandidatura(null);
@@ -144,6 +366,52 @@ const App = () => {
     }
   };
 
+  // Abrir modal de avaliação de entrevista
+  const abrirModalEntrevista = (candidatura) => {
+    setSelectedCandidatura(candidatura);
+    setEntrevistaForm({
+      entrevista_realizada: true,
+      data_entrevista: new Date().toISOString().split('T')[0],
+      entrevistador_id: 'admin',
+      pontuacao_entrevista: candidatura.pontuacao_entrevista || 0,
+      observacoes_entrevista: candidatura.observacoes_entrevista || '',
+      criterio_comunicacao: candidatura.criterio_comunicacao || 0,
+      criterio_conhecimento: candidatura.criterio_conhecimento || 0,
+      criterio_atitude: candidatura.criterio_atitude || 0,
+      criterio_experiencia: candidatura.criterio_experiencia || 0,
+      criterio_motivacao: candidatura.criterio_motivacao || 0,
+      recomendacoes: candidatura.recomendacoes || ''
+    });
+    setShowEntrevistaModal(true);
+  };
+
+  // Avaliar entrevista do candidato
+  const avaliarEntrevista = async () => {
+    if (!selectedCandidatura) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/candidaturas/${selectedCandidatura.id}/avaliar-entrevista`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entrevistaForm)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        alert(`Entrevista ${entrevistaForm.entrevista_realizada ? 'avaliada' : 'marcada como não realizada'} com sucesso!`);
+        carregarDados();
+        setShowEntrevistaModal(false);
+        setSelectedCandidatura(null);
+      } else {
+        const errorData = await response.json();
+        alert(`Erro: ${errorData.error || 'Erro desconhecido'}`);
+      }
+    } catch (error) {
+      console.error('Erro ao avaliar entrevista:', error);
+      alert('Erro ao avaliar entrevista');
+    }
+  };
+
   // Registrar candidatura presencial
   const registrarCandidaturaPresencial = async () => {
     try {
@@ -164,9 +432,7 @@ const App = () => {
         formData.append('documento_certificado', registroPresencialForm.documento_certificado);
       }
 
-      // Adicionar utilizador_id fictício (em produção, seria criado um utilizador)
-      formData.append('utilizador_id', 'presencial-' + Date.now());
-      formData.append('processo_id', 'default-process-id'); // ID do processo eleitoral atual
+      // O backend agora cuidará de criar o utilizador/perfis e associar ao processo atual se estes vierem vazios
 
       const response = await fetch(`${API_URL}/api/candidaturas/completa`, {
         method: 'POST',
@@ -512,6 +778,24 @@ const App = () => {
                             <FileText size={16} /> Avaliar Documentação
                           </button>
                         )}
+
+                        {(candidatura.estado_geral === 'aprovado' || candidatura.resultado_final === 'aprovado_documentacao') && !candidatura.entrevista_realizada && (
+                          <button
+                            style={{ ...styles.actionButton, backgroundColor: '#17a2b8', color: 'white' }}
+                            onClick={() => abrirModalEntrevista(candidatura)}
+                          >
+                            <Users size={16} /> Avaliar Entrevista
+                          </button>
+                        )}
+
+                        {candidatura.entrevista_realizada && (
+                          <button
+                            style={{ ...styles.actionButton, backgroundColor: '#6f42c1', color: 'white' }}
+                            onClick={() => abrirModalEntrevista(candidatura)}
+                          >
+                            <Users size={16} /> Ver Entrevista
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -527,8 +811,7 @@ const App = () => {
                 transition={{ duration: 0.3 }}
               >
                 <div style={styles.pageHeader}>
-                  <h2>Gestão de Formação</h2>
-                  <button style={styles.primaryButton}>
+                  <button style={styles.primaryButton} onClick={() => setShowNovaTurmaModal(true)}>
                     <Plus size={18} /> Nova Turma
                   </button>
                 </div>
@@ -563,22 +846,116 @@ const App = () => {
                       </div>
 
                       <div style={styles.turmaActions}>
-                        <button style={styles.actionButton}>
+                        <button style={styles.actionButton} onClick={() => verDetalhesTurma(turma)}>
                           <Eye size={16} /> Ver Detalhes
                         </button>
-                        <button style={styles.actionButton}>
+                        <button style={styles.actionButton} onClick={() => abrirModalDistribuir(turma)}>
                           <Users size={16} /> Adicionar Formandos
                         </button>
-                        <button style={styles.actionButton}>
-                          <Calendar size={16} /> Presenças
-                        </button>
-                        <button style={styles.actionButton}>
-                          <Edit size={16} /> Editar
-                        </button>
+                        {turma.estado === 'em_andamento' && (
+                          <button 
+                            style={{ ...styles.actionButton, backgroundColor: '#6f42c1', color: 'white' }}
+                            onClick={() => abrirModalPauta(turma)}
+                          >
+                            <FileText size={16} /> Avaliar Turma (Pauta)
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
+              </motion.div>
+            )}
+
+            {/* NOTIFICAÇÕES VIEW */}
+            {view === 'notificacoes' && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+                <div style={styles.pageHeader}>
+                  <h2 style={styles.pageTitle}>Log de SMS e Notificações</h2>
+                  <button style={styles.primaryButton} onClick={() => setShowNovaNotificacaoModal(true)}>
+                    <Mail size={16} /> Nova Notificação
+                  </button>
+                </div>
+                <div style={styles.tableContainer}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Data de Envio</th>
+                        <th style={styles.th}>Destinatário</th>
+                        <th style={styles.th}>Contacto</th>
+                        <th style={styles.th}>Mensagem</th>
+                        <th style={styles.th}>Lido</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {notificacoesLista.map(n => (
+                        <tr key={n.id} style={styles.tr}>
+                          <td style={styles.td}>{new Date(n.data_envio).toLocaleString()}</td>
+                          <td style={styles.td}>{n.destinatario_nome || n.destinatario_id}</td>
+                          <td style={styles.td}>{n.contacto || 'N/A'}</td>
+                          <td style={styles.td}>{n.mensagem}</td>
+                          <td style={styles.td}>{n.lida ? <CheckCircle size={16} color="#10b981"/> : <XCircle size={16} color="#64748b"/>}</td>
+                        </tr>
+                      ))}
+                      {notificacoesLista.length === 0 && (
+                        <tr><td colSpan="5" style={{...styles.td, textAlign: 'center'}}>Nenhuma notificação enviada ainda.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </motion.div>
+            )}
+
+            {/* RELATÓRIOS VIEW */}
+            {view === 'relatorios' && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+                <div style={styles.pageHeader}>
+                  <h2 style={styles.pageTitle}>Relatórios Consolidados</h2>
+                </div>
+                {relatoriosDados ? (
+                  <>
+                    <div style={styles.statsGrid}>
+                      <div style={{...styles.statCard}}>
+                        <h4 style={styles.statTitle}>Total Inscritos</h4>
+                        <div style={styles.statValue}>{relatoriosDados.kpis.total_inscritos}</div>
+                      </div>
+                      <div style={{...styles.statCard}}>
+                        <h4 style={styles.statTitle}>Aprovados</h4>
+                        <div style={styles.statValue}>{relatoriosDados.kpis.aprovados_final}</div>
+                      </div>
+                      <div style={{...styles.statCard}}>
+                        <h4 style={styles.statTitle}>Formandos Locados</h4>
+                        <div style={styles.statValue}>{relatoriosDados.kpis.formandos_alocados}</div>
+                      </div>
+                      <div style={{...styles.statCard}}>
+                        <h4 style={styles.statTitle}>Em Turmas</h4>
+                        <div style={styles.statValue}>{relatoriosDados.kpis.total_turmas}</div>
+                      </div>
+                    </div>
+                    
+                    <div style={{ ...styles.formContainer, marginTop: '20px' }}>
+                      <h3 style={{ color: 'white', marginBottom: '15px' }}>Inscritos por Categoria</h3>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={styles.th}>Categoria</th>
+                            <th style={styles.th}>Total Base de Dados</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {relatoriosDados.por_categoria.map((c, i) => (
+                            <tr key={i} style={styles.tr}>
+                              <td style={styles.td}>{c.nome || 'Sem categoria'}</td>
+                              <td style={styles.td}><strong style={{color: '#d4a30d'}}>{c.total}</strong></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : (
+                  <p style={{ color: '#94a3b8' }}>A carregar dados dos relatórios...</p>
+                )}
               </motion.div>
             )}
           </div>
@@ -740,6 +1117,175 @@ const App = () => {
           </div>
         )}
 
+        {/* Modal de Avaliação de Entrevista */}
+        {showEntrevistaModal && selectedCandidatura && (
+          <div style={styles.modalOverlay}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              style={styles.modal}
+            >
+              <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>Avaliação de Entrevista</h3>
+                <button
+                  style={styles.modalCloseButton}
+                  onClick={() => setShowEntrevistaModal(false)}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div style={styles.modalBody}>
+                <div style={styles.candidaturaInfoModal}>
+                  <h4>{selectedCandidatura.nome_completo || 'Candidato'}</h4>
+                  <p>{selectedCandidatura.categoria_nome || 'MMV'} • {selectedCandidatura.email}</p>
+                </div>
+
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>
+                    <input
+                      type="checkbox"
+                      checked={entrevistaForm.entrevista_realizada}
+                      onChange={(e) => setEntrevistaForm({ ...entrevistaForm, entrevista_realizada: e.target.checked })}
+                    />
+                    Entrevista Realizada
+                  </label>
+                </div>
+
+                {entrevistaForm.entrevista_realizada && (
+                  <>
+                    <div style={styles.formGroup}>
+                      <label style={styles.label}>Data da Entrevista:</label>
+                      <input
+                        type="date"
+                        style={styles.input}
+                        value={entrevistaForm.data_entrevista}
+                        onChange={(e) => setEntrevistaForm({ ...entrevistaForm, data_entrevista: e.target.value })}
+                      />
+                    </div>
+
+                    <div style={styles.criteriaGrid}>
+                      <div style={styles.criterion}>
+                        <label style={styles.label}>Comunicação (0-10):</label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="10"
+                          value={entrevistaForm.criterio_comunicacao}
+                          onChange={(e) => setEntrevistaForm({ ...entrevistaForm, criterio_comunicacao: parseInt(e.target.value) })}
+                          style={styles.rangeInput}
+                        />
+                        <span style={styles.rangeValue}>{entrevistaForm.criterio_comunicacao}</span>
+                      </div>
+
+                      <div style={styles.criterion}>
+                        <label style={styles.label}>Conhecimento (0-10):</label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="10"
+                          value={entrevistaForm.criterio_conhecimento}
+                          onChange={(e) => setEntrevistaForm({ ...entrevistaForm, criterio_conhecimento: parseInt(e.target.value) })}
+                          style={styles.rangeInput}
+                        />
+                        <span style={styles.rangeValue}>{entrevistaForm.criterio_conhecimento}</span>
+                      </div>
+
+                      <div style={styles.criterion}>
+                        <label style={styles.label}>Atitude (0-10):</label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="10"
+                          value={entrevistaForm.criterio_atitude}
+                          onChange={(e) => setEntrevistaForm({ ...entrevistaForm, criterio_atitude: parseInt(e.target.value) })}
+                          style={styles.rangeInput}
+                        />
+                        <span style={styles.rangeValue}>{entrevistaForm.criterio_atitude}</span>
+                      </div>
+
+                      <div style={styles.criterion}>
+                        <label style={styles.label}>Experiência (0-10):</label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="10"
+                          value={entrevistaForm.criterio_experiencia}
+                          onChange={(e) => setEntrevistaForm({ ...entrevistaForm, criterio_experiencia: parseInt(e.target.value) })}
+                          style={styles.rangeInput}
+                        />
+                        <span style={styles.rangeValue}>{entrevistaForm.criterio_experiencia}</span>
+                      </div>
+
+                      <div style={styles.criterion}>
+                        <label style={styles.label}>Motivação (0-10):</label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="10"
+                          value={entrevistaForm.criterio_motivacao}
+                          onChange={(e) => setEntrevistaForm({ ...entrevistaForm, criterio_motivacao: parseInt(e.target.value) })}
+                          style={styles.rangeInput}
+                        />
+                        <span style={styles.rangeValue}>{entrevistaForm.criterio_motivacao}</span>
+                      </div>
+                    </div>
+
+                    <div style={styles.formGroup}>
+                      <label style={styles.label}>Pontuação da Entrevista (0-100):</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        style={styles.input}
+                        value={entrevistaForm.pontuacao_entrevista}
+                        onChange={(e) => setEntrevistaForm({ ...entrevistaForm, pontuacao_entrevista: parseInt(e.target.value) || 0 })}
+                      />
+                    </div>
+
+                    <div style={styles.formGroup}>
+                      <label style={styles.label}>Observações da Entrevista:</label>
+                      <textarea
+                        style={styles.textarea}
+                        value={entrevistaForm.observacoes_entrevista}
+                        onChange={(e) => setEntrevistaForm({ ...entrevistaForm, observacoes_entrevista: e.target.value })}
+                        placeholder="Observações sobre a entrevista..."
+                        rows="3"
+                      />
+                    </div>
+
+                    <div style={styles.formGroup}>
+                      <label style={styles.label}>Recomendações:</label>
+                      <textarea
+                        style={styles.textarea}
+                        value={entrevistaForm.recomendacoes}
+                        onChange={(e) => setEntrevistaForm({ ...entrevistaForm, recomendacoes: e.target.value })}
+                        placeholder="Recomendações para o candidato..."
+                        rows="2"
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div style={styles.modalFooter}>
+                  <button
+                    style={{ ...styles.button, backgroundColor: '#d4a30d' }}
+                    onClick={avaliarEntrevista}
+                  >
+                    {entrevistaForm.entrevista_realizada ? 'Avaliar Entrevista' : 'Marcar como Não Realizada'}
+                  </button>
+                  <button
+                    style={{ ...styles.button, backgroundColor: '#6c757d' }}
+                    onClick={() => setShowEntrevistaModal(false)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {/* Modal de Registro Presencial */}
         {showRegistroPresencialModal && (
           <div style={styles.modalOverlay}>
@@ -836,6 +1382,54 @@ const App = () => {
                   />
                 </div>
 
+                {/* Novos campos para o Schema v8 */}
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Categoria de Cargo:</label>
+                  <select
+                    style={styles.select}
+                    value={registroPresencialForm.categoria_id}
+                    onChange={(e) => setRegistroPresencialForm({ ...registroPresencialForm, categoria_id: e.target.value })}
+                  >
+                    <option value="">Seleccione a Categoria</option>
+                    {categorias.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.nome}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Província:</label>
+                  <select
+                    style={styles.select}
+                    value={registroPresencialForm.provincia_id}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setRegistroPresencialForm({ ...registroPresencialForm, provincia_id: id, distrito_id: '' });
+                      carregarDistritos(id);
+                    }}
+                  >
+                    <option value="">Seleccione a Província</option>
+                    {provincias.map(p => (
+                      <option key={p.id} value={p.id}>{p.nome}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Distrito:</label>
+                  <select
+                    style={styles.select}
+                    value={registroPresencialForm.distrito_id}
+                    onChange={(e) => setRegistroPresencialForm({ ...registroPresencialForm, distrito_id: e.target.value })}
+                    disabled={!registroPresencialForm.provincia_id}
+                  >
+                    <option value="">Seleccione o Distrito</option>
+                    {distritos.map(d => (
+                      <option key={d.id} value={d.id}>{d.nome}</option>
+                    ))}
+                  </select>
+                </div>
+
                 <div style={styles.formGroup}>
                   <label style={styles.label}>Documento do BI:</label>
                   <input
@@ -868,6 +1462,382 @@ const App = () => {
                     onClick={registrarCandidaturaPresencial}
                   >
                     Registrar Candidatura
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+        {/* Modal Pauta Formulário */}
+        {showPautaModal && selectedTurmaParaPauta && (
+          <div style={styles.modalOverlay}>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              style={{ ...styles.modal, width: '900px', maxWidth: '95vw' }}
+            >
+              <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>Avaliação de Turma: {selectedTurmaParaPauta.nome}</h3>
+                <button style={styles.modalCloseButton} onClick={() => setShowPautaModal(false)}>×</button>
+              </div>
+              <div style={{ ...styles.modalBody, maxHeight: '60vh', overflowY: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#1e293b', textAlign: 'left', color: '#94a3b8' }}>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Candidato</th>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Presenças</th>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Faltas</th>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Nota (0-20)</th>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Obs.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {formandosPauta.map((formando, index) => (
+                      <tr key={formando.formando_id}>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #334155', color: '#fff' }}>
+                          {formando.nome_completo}
+                        </td>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #334155' }}>
+                          <input 
+                            type="number" 
+                            style={styles.input} 
+                            value={formando.presencas}
+                            onChange={(e) => {
+                              const newF = [...formandosPauta];
+                              newF[index].presencas = parseInt(e.target.value) || 0;
+                              setFormandosPauta(newF);
+                            }}
+                          />
+                        </td>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #334155' }}>
+                          <input 
+                            type="number" 
+                            style={styles.input} 
+                            value={formando.faltas}
+                            onChange={(e) => {
+                              const newF = [...formandosPauta];
+                              newF[index].faltas = parseInt(e.target.value) || 0;
+                              setFormandosPauta(newF);
+                            }}
+                          />
+                        </td>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #334155' }}>
+                          <input 
+                            type="number" 
+                            style={styles.input} 
+                            value={formando.nota_final}
+                            min="0" max="20" step="0.5"
+                            onChange={(e) => {
+                              const newF = [...formandosPauta];
+                              newF[index].nota_final = parseFloat(e.target.value) || 0;
+                              setFormandosPauta(newF);
+                            }}
+                          />
+                        </td>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #334155' }}>
+                          <input 
+                            type="text" 
+                            style={styles.input} 
+                            value={formando.observacoes}
+                            onChange={(e) => {
+                              const newF = [...formandosPauta];
+                              newF[index].observacoes = e.target.value;
+                              setFormandosPauta(newF);
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {formandosPauta.length === 0 && (
+                  <p style={{ textAlign: 'center', color: '#94a3b8', marginTop: '20px' }}>Nenhum formando adicionado a esta turma.</p>
+                )}
+              </div>
+              <div style={styles.modalActions}>
+                <button style={{ ...styles.button, backgroundColor: '#6b7280' }} onClick={() => setShowPautaModal(false)}>Cancelar</button>
+                <button style={{ ...styles.button, backgroundColor: '#10b981' }} onClick={salvarPauta}>Salvar Pauta e Enviar SMS</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Modal Detalhes Turma */}
+        {showDetalhesTurmaModal && turmaDetalhesSelecionada && (
+          <div style={styles.modalOverlay}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              style={{ ...styles.modal, width: '500px' }}
+            >
+              <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>Detalhes da Turma</h3>
+                <button
+                  style={styles.modalCloseButton}
+                  onClick={() => setShowDetalhesTurmaModal(false)}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div style={styles.modalBody}>
+                <div style={styles.candidaturaInfoModal}>
+                  <h4 style={{ color: '#d4a30d', fontSize: '20px', marginBottom: '8px' }}>
+                    {turmaDetalhesSelecionada.nome}
+                  </h4>
+                  <p style={{ color: '#94a3b8', fontSize: '14px', marginBottom: '20px' }}>
+                    Código: <strong>{turmaDetalhesSelecionada.codigo}</strong>
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <div style={{ backgroundColor: '#0f172a', padding: '15px', borderRadius: '8px', border: '1px solid #334155' }}>
+                     <p style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#94a3b8' }}><MapPin size={14} style={{ marginRight: '6px' }}/> Localização</p>
+                     <p style={{ margin: 0, color: 'white', fontWeight: '500' }}>{turmaDetalhesSelecionada.centro_nome || 'Não definido'}</p>
+                  </div>
+                  
+                  <div style={{ backgroundColor: '#0f172a', padding: '15px', borderRadius: '8px', border: '1px solid #334155' }}>
+                     <p style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#94a3b8' }}><Users size={14} style={{ marginRight: '6px' }}/> Vagas Ocupadas</p>
+                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '24px', fontWeight: 'bold', color: '#d4a30d' }}>{turmaDetalhesSelecionada.vagas_preenchidas || 0}</span>
+                        <span style={{ color: '#64748b' }}>/ {turmaDetalhesSelecionada.capacidade_maxima}</span>
+                     </div>
+                  </div>
+
+                  <div style={{ backgroundColor: '#0f172a', padding: '15px', borderRadius: '8px', border: '1px solid #334155' }}>
+                     <p style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#94a3b8' }}><User size={14} style={{ marginRight: '6px' }}/> Formador Principal</p>
+                     <p style={{ margin: 0, color: 'white', fontWeight: '500' }}>{turmaDetalhesSelecionada.formador_principal_nome || 'Por indicar'}</p>
+                  </div>
+                </div>
+
+                <div style={styles.modalActions}>
+                  <button
+                    style={styles.primaryButton}
+                    onClick={() => setShowDetalhesTurmaModal(false)}
+                  >
+                    Fechar Detalhes
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Modal Nova Turma */}
+        {showNovaTurmaModal && (
+          <div style={styles.modalOverlay}>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              style={{ ...styles.modal, width: '600px', maxWidth: '95vw' }}
+            >
+              <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>Criar Nova Turma</h3>
+                <button style={styles.modalCloseButton} onClick={() => setShowNovaTurmaModal(false)}>×</button>
+              </div>
+              <div style={{ ...styles.modalBody, maxHeight: '60vh', overflowY: 'auto' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Nome da Turma</label>
+                    <input style={styles.input} type="text" value={novaTurmaForm.nome} onChange={e => setNovaTurmaForm({...novaTurmaForm, nome: e.target.value})} placeholder="Ex: MMV-01 Beira" />
+                  </div>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Código</label>
+                    <input style={styles.input} type="text" value={novaTurmaForm.codigo} onChange={e => setNovaTurmaForm({...novaTurmaForm, codigo: e.target.value})} placeholder="BEI-MMV-A1" />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Processo Eleitoral</label>
+                    <select style={styles.select} value={novaTurmaForm.processo_id} onChange={e => setNovaTurmaForm({...novaTurmaForm, processo_id: e.target.value})}>
+                      <option value="">Selecione...</option>
+                      {processos.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                    </select>
+                  </div>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Categoria</label>
+                    <select style={styles.select} value={novaTurmaForm.categoria_id} onChange={e => setNovaTurmaForm({...novaTurmaForm, categoria_id: e.target.value})}>
+                      <option value="">Selecione...</option>
+                      {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Centro de Formação</label>
+                  <select style={styles.select} value={novaTurmaForm.centro_id} onChange={e => setNovaTurmaForm({...novaTurmaForm, centro_id: e.target.value})}>
+                    <option value="">Selecione...</option>
+                    {centros.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                  </select>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '15px' }}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Data Início</label>
+                    <input style={styles.input} type="date" value={novaTurmaForm.data_inicio} onChange={e => setNovaTurmaForm({...novaTurmaForm, data_inicio: e.target.value})} />
+                  </div>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Data Fim</label>
+                    <input style={styles.input} type="date" value={novaTurmaForm.data_fim} onChange={e => setNovaTurmaForm({...novaTurmaForm, data_fim: e.target.value})} />
+                  </div>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Vagas</label>
+                    <input style={styles.input} type="number" min="1" value={novaTurmaForm.capacidade_maxima} onChange={e => setNovaTurmaForm({...novaTurmaForm, capacidade_maxima: parseInt(e.target.value)})} />
+                  </div>
+                </div>
+                
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Horário (ex: 08:00 - 12:00)</label>
+                  <input style={styles.input} type="text" value={novaTurmaForm.horario} onChange={e => setNovaTurmaForm({...novaTurmaForm, horario: e.target.value})} />
+                </div>
+              </div>
+              <div style={styles.modalActions}>
+                <button style={{ ...styles.button, backgroundColor: '#6b7280' }} onClick={() => setShowNovaTurmaModal(false)}>Cancelar</button>
+                <button style={{ ...styles.button, backgroundColor: '#10b981' }} onClick={salvarNovaTurma}>Guardar Turma</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Modal Distribuir Formandos */}
+        {showDistribuirModal && turmaDistribuicaoSelecionada && (
+          <div style={styles.modalOverlay}>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              style={{ ...styles.modal, width: '800px', maxWidth: '95vw' }}
+            >
+              <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>Afectar Formandos: {turmaDistribuicaoSelecionada.nome}</h3>
+                <button style={styles.modalCloseButton} onClick={() => setShowDistribuirModal(false)}>×</button>
+              </div>
+              <div style={{ ...styles.modalBody, maxHeight: '60vh', overflowY: 'auto' }}>
+                <div style={{ marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <p style={{ margin: 0, color: '#94a3b8' }}>Selecione os candidatos que farão parte desta turma. Vagas disponíveis: <strong style={{ color: '#d4a30d'}}>{turmaDistribuicaoSelecionada.capacidade_maxima - (turmaDistribuicaoSelecionada.vagas_preenchidas || 0)}</strong></p>
+                  <p style={{ margin: 0, color: '#fff' }}>Selecionados: <strong>{candidatosSelecionados.length}</strong></p>
+                </div>
+                
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#1e293b', textAlign: 'left', color: '#94a3b8' }}>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155', width: '40px' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={candidatosSelecionados.length === candidatosDisponiveis.length && candidatosDisponiveis.length > 0}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setCandidatosSelecionados(candidatosDisponiveis.map(c => c.id));
+                            } else {
+                              setCandidatosSelecionados([]);
+                            }
+                          }}
+                        />
+                      </th>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Nome</th>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Contacto</th>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Entrevista</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidatosDisponiveis.length > 0 ? candidatosDisponiveis.map((cand) => (
+                      <tr key={cand.id} style={{ backgroundColor: candidatosSelecionados.includes(cand.id) ? '#334155' : 'transparent', transition: 'background-color 0.2s', cursor: 'pointer' }} onClick={() => alternarSelecaoCandidato(cand.id)}>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #334155' }}>
+                          <input 
+                            type="checkbox" 
+                            checked={candidatosSelecionados.includes(cand.id)}
+                            onChange={() => {}} // Handler no tr
+                          />
+                        </td>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #334155', color: '#fff' }}>{cand.nome_completo}</td>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #334155', color: '#94a3b8' }}>{cand.contacto_principal || cand.telefone || 'N/A'}</td>
+                        <td style={{ padding: '10px', borderBottom: '1px solid #334155', color: '#10b981', fontWeight: 'bold' }}>{cand.pontuacao_entrevista || 'N/A'}/100</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>Nenhum candidato aprovado e disponível nesta categoria.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div style={styles.modalActions}>
+                <button style={{ ...styles.button, backgroundColor: '#6b7280' }} onClick={() => setShowDistribuirModal(false)}>Cancelar</button>
+                <button style={{ ...styles.button, backgroundColor: '#10b981' }} onClick={salvarDistribuicaoFormandos} disabled={candidatosSelecionados.length === 0}>Alocar {candidatosSelecionados.length} Formandos</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+        {/* Modal Nova Notificacao */}
+        {showNovaNotificacaoModal && (
+          <div style={styles.modalOverlay}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              style={{ ...styles.modal, width: '500px' }}
+            >
+              <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>Redigir Notificação (SMS)</h3>
+                <button
+                  style={styles.modalCloseButton}
+                  onClick={() => setShowNovaNotificacaoModal(false)}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div style={styles.modalBody}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Público Alvo</label>
+                  <select
+                    style={styles.select}
+                    value={novaNotificacaoForm.publico_alvo}
+                    onChange={(e) => setNovaNotificacaoForm({ ...novaNotificacaoForm, publico_alvo: e.target.value })}
+                  >
+                    <option value="todos">Todos os Candidatos Recenseados</option>
+                    <option value="pendentes">Apenas Candidatos Pendentes</option>
+                    <option value="aprovados">Candidatos Aprovados</option>
+                    <option value="reprovados">Candidatos Reprovados</option>
+                    <option value="alocados_formacao">Formandos (Apenas Afectos a Turmas)</option>
+                  </select>
+                </div>
+
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Título (Referência Interna)</label>
+                  <input
+                    type="text"
+                    style={styles.input}
+                    value={novaNotificacaoForm.titulo}
+                    onChange={(e) => setNovaNotificacaoForm({ ...novaNotificacaoForm, titulo: e.target.value })}
+                  />
+                </div>
+
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Mensagem SMS</label>
+                  <textarea
+                    style={styles.textarea}
+                    rows="4"
+                    placeholder="Escreva a mensagem que os candidatos vão receber instantaneamente no telemóvel..."
+                    value={novaNotificacaoForm.mensagem}
+                    onChange={(e) => setNovaNotificacaoForm({ ...novaNotificacaoForm, mensagem: e.target.value })}
+                  />
+                  <small style={{ color: '#64748b', marginTop: '4px', display: 'block' }}>
+                    Caracteres: {novaNotificacaoForm.mensagem.length} (Max 160 recomendado)
+                  </small>
+                </div>
+
+                <div style={styles.modalActions}>
+                  <button
+                    style={{ ...styles.button, backgroundColor: '#6c757d' }}
+                    onClick={() => setShowNovaNotificacaoModal(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    style={styles.primaryButton}
+                    onClick={enviarNovaNotificacao}
+                  >
+                    <Mail size={16} /> Disparar Lote SMS
                   </button>
                 </div>
               </div>
@@ -1371,6 +2341,27 @@ const styles = {
     fontSize: '14px',
     fontWeight: '500',
     color: 'white'
+  },
+  statsGrid: {
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px'
+  },
+  statCard: {
+    backgroundColor: '#1E293B', padding: '20px', borderRadius: '12px', border: '1px solid #334155'
+  },
+  statTitle: {
+    color: '#94A3B8', fontSize: '14px', margin: '0 0 8px 0', fontWeight: '500'
+  },
+  statValue: {
+    color: '#D4A30D', fontSize: '32px', fontWeight: 'bold'
+  },
+  th: {
+    padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #334155', color: '#94A3B8', fontSize: '14px', fontWeight: '600'
+  },
+  td: {
+    padding: '12px 16px', borderBottom: '1px solid #334155', color: 'white', fontSize: '14px'
+  },
+  tr: {
+    transition: 'background-color 0.2s', '&:hover': { backgroundColor: '#334155' }
   }
 };
 
