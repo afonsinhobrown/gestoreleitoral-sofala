@@ -10,7 +10,8 @@ const App = () => {
    const [configs, setConfigs] = useState({ categorias: [], provincias: [], processos: [] });
 
    const [submeterForm, setSubmeterForm] = useState({
-      nome_completo: '',
+      primeiro_nome: '',
+      apelido: '',
       nuit: '',
       bi_numero: '',
       contacto_principal: '',
@@ -44,7 +45,6 @@ const App = () => {
          console.error('Erro ao carregar configurações:', error);
       }
    };
-
    const handleSubmeterCandidatura = async (e) => {
       e.preventDefault();
       
@@ -56,7 +56,10 @@ const App = () => {
       setLoading(true);
       try {
          const formData = new FormData();
-         formData.append('nome_completo', submeterForm.nome_completo);
+         formData.append('primeiro_nome', submeterForm.primeiro_nome);
+         formData.append('apelido', submeterForm.apelido);
+         // Backend can join these for legacy nome_completo compatibility
+         formData.append('nome_completo', `${submeterForm.primeiro_nome} ${submeterForm.apelido}`);
          formData.append('nuit', submeterForm.nuit);
          formData.append('bi_numero', submeterForm.bi_numero);
          formData.append('contacto_principal', submeterForm.contacto_principal);
@@ -78,7 +81,7 @@ const App = () => {
          if (response.ok) {
             setView('sucesso');
             setSubmeterForm({
-               nome_completo: '', nuit: '', bi_numero: '', contacto_principal: '', email: '', genero: 'Masculino',
+               primeiro_nome: '', apelido: '', nuit: '', bi_numero: '', contacto_principal: '', email: '', genero: 'Masculino',
                categoria_id: '', processo_id: '', provincia_actuacao_id: '',
                documento_bi: null, documento_certificado: null, observacoes: ''
             });
@@ -93,162 +96,176 @@ const App = () => {
          setLoading(false);
       }
    };
-
-   // ================== VIEWS ==================
-   const HomeView = () => (
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={styles.container}>
-         <div style={styles.header}>
-            <img src="/logo_stae.svg" alt="STAE Logo" style={styles.logo} />
-            <h1 style={styles.title}>STAE SOFALA</h1>
-            <p style={styles.subtitle}>Portal do Eleitor - Candidaturas 2026</p>
-         </div>
-
-         <div style={styles.cardGrid}>
-            <button style={styles.card} onClick={() => setView('formulario')}>
-               <div style={styles.cardIcon}>
-                  <FileText size={24} />
-               </div>
-               <h3 style={styles.cardTitle}>Submeter Candidatura</h3>
-               <p style={styles.cardDescription}>Inscreva-se como MMV, Brigadista, Formador, etc.</p>
-            </button>
-
-            <button style={styles.card} onClick={() => alert('Consulte os editais públicos no portal principal.')}>
-               <div style={styles.cardIcon}>
-                  <BookOpen size={24} />
-               </div>
-               <h3 style={styles.cardTitle}>Informações</h3>
-               <p style={styles.cardDescription}>Consultar requisitos e despachos</p>
-            </button>
-         </div>
-
-         <div style={styles.footer}>
-            <p style={styles.footerText}>Secretariado Técnico de Administração Eleitoral</p>
-            <p style={styles.footerSubtext}>Província de Sofala - 2026</p>
-         </div>
-      </motion.div>
-   );
-
-   const FormularioView = () => (
-      <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} style={styles.container}>
-         <button style={styles.backButton} onClick={() => setView('home')}>
-            ← Voltar
-         </button>
-
-         <div style={styles.formContainer}>
-            <h2 style={styles.formTitle}>Formulário de Candidatura</h2>
-            <p style={{ color: '#94a3b8', marginBottom: '20px' }}>Preencha os seus dados. Receberá atualizações via SMS.</p>
-            
-            <form onSubmit={handleSubmeterCandidatura}>
-               <div style={styles.formSection}>
-                  <h3 style={styles.sectionHeading}>Dados Pessoais</h3>
-                  <div style={styles.formGroup}>
-                     <label style={styles.label}>Nome Completo *</label>
-                     <input type="text" style={styles.input} value={submeterForm.nome_completo} onChange={(e) => setSubmeterForm({ ...submeterForm, nome_completo: e.target.value })} required />
-                  </div>
-                  
-                  <div style={styles.row}>
-                     <div style={styles.formGroup}>
-                        <label style={styles.label}>Número de BI *</label>
-                        <input type="text" style={styles.input} value={submeterForm.bi_numero} onChange={(e) => setSubmeterForm({ ...submeterForm, bi_numero: e.target.value })} required />
-                     </div>
-                     <div style={styles.formGroup}>
-                        <label style={styles.label}>NUIT</label>
-                        <input type="text" style={styles.input} value={submeterForm.nuit} onChange={(e) => setSubmeterForm({ ...submeterForm, nuit: e.target.value })} />
-                     </div>
-                  </div>
-
-                  <div style={styles.row}>
-                     <div style={styles.formGroup}>
-                        <label style={styles.label}>Nº de Telefone (SMS) *</label>
-                        <input type="tel" style={styles.input} value={submeterForm.contacto_principal} onChange={(e) => setSubmeterForm({ ...submeterForm, contacto_principal: e.target.value })} required />
-                     </div>
-                     <div style={styles.formGroup}>
-                        <label style={styles.label}>Email</label>
-                        <input type="email" style={styles.input} value={submeterForm.email} onChange={(e) => setSubmeterForm({ ...submeterForm, email: e.target.value })} />
-                     </div>
-                  </div>
-                  
-                  <div style={styles.formGroup}>
-                     <label style={styles.label}>Género *</label>
-                     <select style={styles.input} value={submeterForm.genero} onChange={(e) => setSubmeterForm({ ...submeterForm, genero: e.target.value })} required>
-                        <option value="Masculino">Masculino</option>
-                        <option value="Feminino">Feminino</option>
-                     </select>
-                  </div>
-               </div>
-
-               <div style={styles.formSection}>
-                  <h3 style={styles.sectionHeading}>Dados da Vaga</h3>
-                  <div style={styles.formGroup}>
-                     <label style={styles.label}>Processo Eleitoral *</label>
-                     <select style={styles.input} value={submeterForm.processo_id} onChange={(e) => setSubmeterForm({ ...submeterForm, processo_id: e.target.value })} required>
-                        <option value="">Selecionar processo</option>
-                        {configs.processos.map(p => <option key={p.id} value={p.id}>{p.nome} ({p.ano})</option>)}
-                     </select>
-                  </div>
-
-                  <div style={styles.formGroup}>
-                     <label style={styles.label}>Categoria Pretendida *</label>
-                     <select style={styles.input} value={submeterForm.categoria_id} onChange={(e) => setSubmeterForm({ ...submeterForm, categoria_id: e.target.value })} required>
-                        <option value="">Selecionar categoria</option>
-                        {configs.categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-                     </select>
-                  </div>
-
-                  <div style={styles.formGroup}>
-                     <label style={styles.label}>Província de Actuação *</label>
-                     <select style={styles.input} value={submeterForm.provincia_actuacao_id} onChange={(e) => setSubmeterForm({ ...submeterForm, provincia_actuacao_id: e.target.value })} required>
-                        <option value="">Selecionar província</option>
-                        {configs.provincias.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                     </select>
-                  </div>
-               </div>
-
-               <div style={styles.formSection}>
-                  <h3 style={styles.sectionHeading}>Documentação</h3>
-                  <div style={styles.formGroup}>
-                     <label style={styles.label}>Cópia do BI (PDF, JPG, PNG) *</label>
-                     <input type="file" style={styles.fileInput} accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => setSubmeterForm({ ...submeterForm, documento_bi: e.target.files[0] })} required />
-                  </div>
-
-                  <div style={styles.formGroup}>
-                     <label style={styles.label}>Certificado Literário (PDF, JPG, PNG) *</label>
-                     <input type="file" style={styles.fileInput} accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => setSubmeterForm({ ...submeterForm, documento_certificado: e.target.files[0] })} required />
-                  </div>
-               </div>
-
-               <button type="submit" style={styles.primaryButton} disabled={loading}>
-                  {loading ? 'A processar...' : 'Confirmar e Submeter Candidatura'}
-               </button>
-            </form>
-         </div>
-      </motion.div>
-   );
-
-   const SucessoView = () => (
-      <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={styles.container}>
-         <div style={{ ...styles.formContainer, textAlign: 'center', padding: '60px 40px' }}>
-            <CheckCircle size={80} color="#10b981" style={{ margin: '0 auto 20px auto' }} />
-            <h2 style={styles.formTitle}>Candidatura Submetida!</h2>
-            <p style={{ color: '#94a3b8', fontSize: '16px', lineHeight: '1.6', marginBottom: '30px' }}>
-               A sua candidatura foi dar entrada no STAE com sucesso.<br/>
-               Por favor, aguarde pacificamente. Qualquer decisão ser-lhe-á notificada via SMS.
-            </p>
-            <button style={{ ...styles.primaryButton, width: 'auto', padding: '12px 30px' }} onClick={() => setView('home')}>
-               Voltar ao Início
-            </button>
-         </div>
-      </motion.div>
-   );
-
    return (
       <div style={styles.app}>
-         {view === 'home' && <HomeView />}
-         {view === 'formulario' && <FormularioView />}
-         {view === 'sucesso' && <SucessoView />}
+         {view === 'home' && <HomeView setView={setView} />}
+         {view === 'formulario' && (
+            <FormularioView 
+               setView={setView} 
+               submeterForm={submeterForm} 
+               setSubmeterForm={setSubmeterForm} 
+               handleSubmeterCandidatura={handleSubmeterCandidatura}
+               configs={configs}
+               loading={loading}
+            />
+         )}
+         {view === 'sucesso' && <SucessoView setView={setView} />}
       </div>
    );
 };
+
+// ================== COMPONENTES DE VISTA ==================
+const HomeView = ({ setView }) => (
+   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={styles.container}>
+      <div style={styles.header}>
+         <img src="/logo_stae.svg" alt="STAE Logo" style={styles.logo} />
+         <h1 style={styles.title}>STAE SOFALA</h1>
+         <p style={styles.subtitle}>Portal do Eleitor - Candidaturas 2026</p>
+      </div>
+
+      <div style={styles.cardGrid}>
+         <button style={styles.card} onClick={() => setView('formulario')}>
+            <div style={styles.cardIcon}>
+               <FileText size={24} />
+            </div>
+            <h3 style={styles.cardTitle}>Submeter Candidatura</h3>
+            <p style={styles.cardDescription}>Inscreva-se como MMV, Brigadista, Formador, etc.</p>
+         </button>
+
+         <button style={styles.card} onClick={() => alert('Consulte os editais públicos no portal principal.')}>
+            <div style={styles.cardIcon}>
+               <BookOpen size={24} />
+            </div>
+            <h3 style={styles.cardTitle}>Informações</h3>
+            <p style={styles.cardDescription}>Consultar requisitos e despachos</p>
+         </button>
+      </div>
+
+      <div style={styles.footer}>
+         <p style={styles.footerText}>Secretariado Técnico de Administração Eleitoral</p>
+         <p style={styles.footerSubtext}>Província de Sofala - 2026</p>
+      </div>
+   </motion.div>
+);
+
+const FormularioView = ({ setView, submeterForm, setSubmeterForm, handleSubmeterCandidatura, configs, loading }) => (
+   <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} style={styles.container}>
+      <button style={styles.backButton} onClick={() => setView('home')}>
+         ← Voltar
+      </button>
+
+      <div style={styles.formContainer}>
+         <h2 style={styles.formTitle}>Formulário de Candidatura</h2>
+         <p style={{ color: '#94a3b8', marginBottom: '20px' }}>Preencha os seus dados. Receberá atualizações via SMS.</p>
+         
+         <form onSubmit={handleSubmeterCandidatura}>
+            <div style={styles.formSection}>
+               <h3 style={styles.sectionHeading}>Dados Pessoais</h3>
+               <div style={styles.row}>
+                  <div style={styles.formGroup}>
+                     <label style={styles.label}>Primeiro Nome *</label>
+                     <input type="text" style={styles.input} value={submeterForm.primeiro_nome} onChange={(e) => setSubmeterForm({ ...submeterForm, primeiro_nome: e.target.value })} required />
+                  </div>
+                  <div style={styles.formGroup}>
+                     <label style={styles.label}>Apelido (Último Nome) *</label>
+                     <input type="text" style={styles.input} value={submeterForm.apelido} onChange={(e) => setSubmeterForm({ ...submeterForm, apelido: e.target.value })} required />
+                  </div>
+               </div>
+               
+               <div style={styles.row}>
+                  <div style={styles.formGroup}>
+                     <label style={styles.label}>Número de BI *</label>
+                     <input type="text" style={styles.input} value={submeterForm.bi_numero} onChange={(e) => setSubmeterForm({ ...submeterForm, bi_numero: e.target.value })} required />
+                  </div>
+                  <div style={styles.formGroup}>
+                     <label style={styles.label}>NUIT</label>
+                     <input type="text" style={styles.input} value={submeterForm.nuit} onChange={(e) => setSubmeterForm({ ...submeterForm, nuit: e.target.value })} />
+                  </div>
+               </div>
+
+               <div style={styles.row}>
+                  <div style={styles.formGroup}>
+                     <label style={styles.label}>Nº de Telefone (SMS) *</label>
+                     <input type="tel" style={styles.input} value={submeterForm.contacto_principal} onChange={(e) => setSubmeterForm({ ...submeterForm, contacto_principal: e.target.value })} required />
+                  </div>
+                  <div style={styles.formGroup}>
+                     <label style={styles.label}>Email</label>
+                     <input type="email" style={styles.input} value={submeterForm.email} onChange={(e) => setSubmeterForm({ ...submeterForm, email: e.target.value })} />
+                  </div>
+               </div>
+               
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Género *</label>
+                  <select style={styles.input} value={submeterForm.genero} onChange={(e) => setSubmeterForm({ ...submeterForm, genero: e.target.value })} required>
+                     <option value="Masculino">Masculino</option>
+                     <option value="Feminino">Feminino</option>
+                  </select>
+               </div>
+            </div>
+
+            <div style={styles.formSection}>
+               <h3 style={styles.sectionHeading}>Dados da Vaga</h3>
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Processo Eleitoral *</label>
+                  <select style={styles.input} value={submeterForm.processo_id} onChange={(e) => setSubmeterForm({ ...submeterForm, processo_id: e.target.value })} required>
+                     <option value="">Selecionar processo</option>
+                     {configs.processos.map(p => <option key={p.id} value={p.id}>{p.nome} ({p.ano})</option>)}
+                  </select>
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Categoria Pretendida *</label>
+                  <select style={styles.input} value={submeterForm.categoria_id} onChange={(e) => setSubmeterForm({ ...submeterForm, categoria_id: e.target.value })} required>
+                     <option value="">Selecionar categoria</option>
+                     {configs.categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                  </select>
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Província de Actuação *</label>
+                  <select style={styles.input} value={submeterForm.provincia_actuacao_id} onChange={(e) => setSubmeterForm({ ...submeterForm, provincia_actuacao_id: e.target.value })} required>
+                     <option value="">Selecionar província</option>
+                     {configs.provincias.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  </select>
+               </div>
+            </div>
+
+            <div style={styles.formSection}>
+               <h3 style={styles.sectionHeading}>Documentação</h3>
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Cópia do BI (PDF, JPG, PNG) *</label>
+                  <input type="file" style={styles.fileInput} accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => setSubmeterForm({ ...submeterForm, documento_bi: e.target.files[0] })} required />
+               </div>
+
+               <div style={styles.formGroup}>
+                  <label style={styles.label}>Certificado Literário (PDF, JPG, PNG) *</label>
+                  <input type="file" style={styles.fileInput} accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => setSubmeterForm({ ...submeterForm, documento_certificado: e.target.files[0] })} required />
+               </div>
+            </div>
+
+            <button type="submit" style={styles.primaryButton} disabled={loading}>
+               {loading ? 'A processar...' : 'Confirmar e Submeter Candidatura'}
+            </button>
+         </form>
+      </div>
+   </motion.div>
+);
+
+const SucessoView = ({ setView }) => (
+   <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={styles.container}>
+      <div style={{ ...styles.formContainer, textAlign: 'center', padding: '60px 40px' }}>
+         <CheckCircle size={80} color="#10b981" style={{ margin: '0 auto 20px auto' }} />
+         <h2 style={styles.formTitle}>Candidatura Submetida!</h2>
+         <p style={{ color: '#94a3b8', fontSize: '16px', lineHeight: '1.6', marginBottom: '30px' }}>
+            A sua candidatura foi dar entrada no STAE com sucesso.<br/>
+            Por favor, aguarde pacificamente. Qualquer decisão ser-lhe-á notificada via SMS.
+         </p>
+         <button style={{ ...styles.primaryButton, width: 'auto', padding: '12px 30px' }} onClick={() => setView('home')}>
+            Voltar ao Início
+         </button>
+      </div>
+   </motion.div>
+);
 
 // ================== ESTILOS ==================
 const styles = {

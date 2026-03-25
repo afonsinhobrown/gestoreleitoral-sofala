@@ -264,6 +264,8 @@ app.post('/api/candidaturas/completa', upload.fields([
       data_nascimento,
       contacto_principal,
       email,
+      primeiro_nome,
+      apelido,
       provincia_id,
       distrito_id,
       posto_id,
@@ -291,24 +293,44 @@ app.post('/api/candidaturas/completa', upload.fields([
       await client.query('BEGIN');
 
       // 1. Validar Obrigatórios
+      if (!nome_completo && primeiro_nome && apelido) {
+        nome_completo = `${primeiro_nome} ${apelido}`;
+      }
+      
       if (!nome_completo || (!nuit && !bi_numero)) {
         return res.status(400).json({ error: 'Nome e Documento (NUIT ou BI) são obrigatórios para a candidatura.' });
       }
 
-      if (!isUUID(processo_id)) return res.status(400).json({ error: 'ID do processo eleitoral é obrigatório.' });
+      // Obter processo eleitoral automaticamente se não fornecido
+      if (!isUUID(processo_id)) {
+        const procResult = await client.query("SELECT id FROM public.processos_eleitorais WHERE estado = 'activo' LIMIT 1");
+        if (procResult.rows.length > 0) {
+          processo_id = procResult.rows[0].id;
+        } else {
+          const recResult = await client.query("SELECT id FROM public.processos_eleitorais ORDER BY ano DESC LIMIT 1");
+          if (recResult.rows.length > 0) {
+            processo_id = recResult.rows[0].id;
+          } else {
+            return res.status(400).json({ error: 'Nenhum processo eleitoral encontrado para associação automática.' });
+          }
+        }
+      }
+
       if (!isUUID(categoria_id)) return res.status(400).json({ error: 'ID da categoria é obrigatório.' });
 
       // Inserir Candidatura Direta (Desacoplada de utilizadores para candidatos)
       const result = await client.query(
         `INSERT INTO public.candidaturas
-         (nome_completo, nuit, bi_numero, telefone, email, genero,
+         (nome_completo, primeiro_nome, apelido, nuit, bi_numero, telefone, email, genero,
           processo_id, categoria_id, provincia_actuacao_id, distrito_actuacao_id,
           posto_actuacao_id, localidade_actuacao_id, documento_bi_url, documento_certificado_url,
           observacoes, fase_atual, estado_geral)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
          RETURNING *`,
         [
           nome_completo,
+          primeiro_nome || null,
+          apelido || null,
           nuit || null,
           bi_numero || null,
           contacto_principal || null,
@@ -814,7 +836,7 @@ app.get('/api/turmas/:id', async (req, res) => {
 // Criar turma
 app.post('/api/turmas', async (req, res) => {
   try {
-    const {
+    let {
       processo_id,
       centro_id,
       nome,
@@ -827,6 +849,20 @@ app.post('/api/turmas', async (req, res) => {
       formador_principal_id,
       formador_auxiliar_id
     } = req.body;
+
+    if (!isUUID(processo_id)) {
+      const procResult = await pool.query("SELECT id FROM public.processos_eleitorais WHERE estado = 'activo' LIMIT 1");
+      if (procResult.rows.length > 0) {
+        processo_id = procResult.rows[0].id;
+      } else {
+        const recResult = await pool.query("SELECT id FROM public.processos_eleitorais ORDER BY ano DESC LIMIT 1");
+        if (recResult.rows.length > 0) {
+          processo_id = recResult.rows[0].id;
+        } else {
+          return res.status(400).json({ error: 'Nenhum processo eleitoral encontrado para associação automática.' });
+        }
+      }
+    }
 
     const result = await pool.query(
       `INSERT INTO public.turmas_formacao 

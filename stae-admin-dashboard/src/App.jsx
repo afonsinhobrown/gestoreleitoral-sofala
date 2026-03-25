@@ -73,7 +73,8 @@ const App = () => {
     recomendacoes: ''
   });
   const [registroPresencialForm, setRegistroPresencialForm] = useState({
-    nome_completo: '',
+    primeiro_nome: '',
+    apelido: '',
     nuit: '',
     bi_numero: '',
     genero: 'Masculino',
@@ -440,10 +441,9 @@ const App = () => {
       });
 
       if (response.ok) {
-        alert('Candidatura registrada com sucesso!');
-        setShowRegistroPresencialModal(false);
         setRegistroPresencialForm({
-          nome_completo: '',
+          primeiro_nome: '',
+          apelido: '',
           nuit: '',
           bi_numero: '',
           genero: 'Masculino',
@@ -1305,15 +1305,27 @@ const App = () => {
               </div>
 
               <div style={styles.modalBody}>
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Nome Completo:</label>
-                  <input
-                    type="text"
-                    style={styles.input}
-                    value={registroPresencialForm.nome_completo}
-                    onChange={(e) => setRegistroPresencialForm({ ...registroPresencialForm, nome_completo: e.target.value })}
-                    placeholder="Nome completo do candidato"
-                  />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Primeiro Nome *</label>
+                    <input
+                      type="text"
+                      style={styles.input}
+                      value={registroPresencialForm.primeiro_nome}
+                      onChange={(e) => setRegistroPresencialForm({ ...registroPresencialForm, primeiro_nome: e.target.value })}
+                      placeholder="Ex: João"
+                    />
+                  </div>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Apelido *</label>
+                    <input
+                      type="text"
+                      style={styles.input}
+                      value={registroPresencialForm.apelido}
+                      onChange={(e) => setRegistroPresencialForm({ ...registroPresencialForm, apelido: e.target.value })}
+                      placeholder="Ex: Manuel"
+                    />
+                  </div>
                 </div>
 
                 <div style={styles.formGroup}>
