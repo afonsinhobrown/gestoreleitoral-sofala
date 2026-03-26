@@ -22,7 +22,13 @@ async function verificarECriarTabelas() {
         });
 
         // 2. Verificar se as tabelas STAE existem
-        const tabelasSTAE = ['candidaturas', 'turmas_formacao', 'utilizadores', 'perfis'];
+        const tabelasSTAE = [
+            'provincias', 'distritos', 'postos_administrativos', 'localidades',
+            'utilizadores', 'perfis', 'processos_eleitorais', 'categorias_cargo', 
+            'candidaturas', 'centros_formacao', 'turmas_formacao', 'formandos_turma', 
+            'pautas_formacao', 'notificacoes', 'logs_sistema',
+            'modelos_equipa', 'funcoes_modelo', 'unidades_operacionais', 'unidade_membros'
+        ];
         const tabelasFaltantes = [];
 
         for (const tabela of tabelasSTAE) {

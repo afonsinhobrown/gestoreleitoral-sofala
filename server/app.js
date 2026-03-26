@@ -1,4 +1,3 @@
-// SISTEMA STAE SOFALA 2026 - API PRINCIPAL
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -11,6 +10,143 @@ const { pool } = require('./db-neon-fixed');
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Migração Automática e Seed de Usuários Administrativos
+(async () => {
+  if (!pool) {
+      console.error('❌ Pool do banco de dados não disponível para migração.');
+      return;
+  }
+  const client = await pool.connect();
+  try {
+    console.log('🔄 Verificando integridade das tabelas e usuários...');
+    // Tabelas...
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.modelos_equipa (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          nome TEXT NOT NULL,
+          processo_id UUID REFERENCES public.processos_eleitorais(id) ON DELETE CASCADE,
+          tipo TEXT NOT NULL,
+          num_membros INTEGER NOT NULL,
+          observacoes TEXT,
+          criado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS public.funcoes_modelo (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          modelo_id UUID REFERENCES public.modelos_equipa(id) ON DELETE CASCADE,
+          cargo TEXT NOT NULL,
+          objetivo TEXT,
+          UNIQUE(modelo_id, cargo)
+      );
+      CREATE TABLE IF NOT EXISTS public.unidades_operacionais (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          nome TEXT NOT NULL,
+          modelo_id UUID REFERENCES public.modelos_equipa(id) ON DELETE CASCADE,
+          localizacao TEXT,
+          status_logistico TEXT DEFAULT 'completo',
+          criado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS public.unidade_membros (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          unidade_id UUID REFERENCES public.unidades_operacionais(id) ON DELETE CASCADE,
+          funcao_id UUID REFERENCES public.funcoes_modelo(id) ON DELETE CASCADE,
+          candidatura_id UUID REFERENCES public.candidaturas(id) ON DELETE SET NULL,
+          UNIQUE(unidade_id, funcao_id)
+      );
+    `);
+
+    // --- SEED DE USUÁRIOS ADMINISTRATIVOS ---
+    await client.query('BEGIN');
+    
+    // 1. Central
+    const centralPass = bcrypt.hashSync('central123', 10);
+    const existingCentral = await client.query('SELECT id FROM public.utilizadores WHERE email = $1', ['central']);
+    if (existingCentral.rows.length === 0) {
+      const res = await client.query('INSERT INTO public.utilizadores (email, password_hash, role) VALUES ($1, $2, $3) RETURNING id', ['central', centralPass, 'master_nacional']);
+      await client.query('INSERT INTO public.perfis (id, nome_completo) VALUES ($1, $2)', [res.rows[0].id, 'Administrador Central']);
+      console.log('✅ Usuário CENTRAL criado');
+    }
+
+    // 2. Provinciais
+    const provincias = await client.query('SELECT * FROM public.provincias');
+    for (const prov of provincias.rows) {
+      const email = prov.nome.toLowerCase().replace(/\s+/g, '');
+      const pass = email + '123';
+      const hash = bcrypt.hashSync(pass, 10);
+      const exists = await client.query('SELECT id FROM public.utilizadores WHERE email = $1', [email]);
+      
+      if (exists.rows.length === 0) {
+        const res = await client.query('INSERT INTO public.utilizadores (email, password_hash, role) VALUES ($1, $2, $3) RETURNING id', [email, hash, 'administrador_provincial']);
+        await client.query('INSERT INTO public.perfis (id, nome_completo, provincia_id) VALUES ($1, $2, $3)', [res.rows[0].id, `Admin Provincial ${prov.nome}`, prov.id]);
+      } else {
+        await client.query('UPDATE public.utilizadores SET password_hash = $1 WHERE email = $2', [hash, email]);
+      }
+    }
+
+    // 3. Distritais
+    const distritos = await client.query('SELECT * FROM public.distritos');
+    for (const dist of distritos.rows) {
+      const email = dist.nome.toLowerCase().replace(/\s+/g, '');
+      const pass = email + '123';
+      const hash = bcrypt.hashSync(pass, 10);
+      const exists = await client.query('SELECT id FROM public.utilizadores WHERE email = $1', [email]);
+      
+      if (exists.rows.length === 0) {
+        const res = await client.query('INSERT INTO public.utilizadores (email, password_hash, role) VALUES ($1, $2, $3) RETURNING id', [email, hash, 'administrador_distrital']);
+        await client.query('INSERT INTO public.perfis (id, nome_completo, distrito_id) VALUES ($1, $2, $3)', [res.rows[0].id, `Admin Distrital ${dist.nome}`, dist.id]);
+      } else {
+        await client.query('UPDATE public.utilizadores SET password_hash = $1 WHERE email = $2', [hash, email]);
+      }
+    }
+
+    // 4. ASSOCIAÇÃO GLOBAL A SOFALA E CIDADE DA BEIRA (TODOS OS DADOS NULL)
+    console.log('🔄 Sincronizando dados sem localização com Sofala/Beira...');
+    const sofalaRow = await client.query("SELECT id FROM public.provincias WHERE nome ILIKE '%sofala%' LIMIT 1");
+    const beiraRow = await client.query("SELECT id FROM public.distritos WHERE nome ILIKE '%beira%' LIMIT 1");
+
+    if (sofalaRow.rows.length > 0 && beiraRow.rows.length > 0) {
+      const sofalaId = sofalaRow.rows[0].id;
+      const beiraId = beiraRow.rows[0].id;
+      console.log(`   Sofala ID: ${sofalaId}`);
+      console.log(`   Beira  ID: ${beiraId}`);
+
+      // Candidaturas (campos de actuação)
+      const r1 = await client.query(
+        `UPDATE public.candidaturas SET provincia_actuacao_id = $1, distrito_actuacao_id = $2
+         WHERE provincia_actuacao_id IS NULL OR distrito_actuacao_id IS NULL`,
+        [sofalaId, beiraId]
+      );
+      console.log(`   ✅ ${r1.rowCount} candidaturas actualizadas`);
+
+      // Centros de formação
+      const r2 = await client.query(
+        `UPDATE public.centros_formacao SET provincia_id = $1, distrito_id = $2
+         WHERE provincia_id IS NULL OR distrito_id IS NULL`,
+        [sofalaId, beiraId]
+      );
+      console.log(`   ✅ ${r2.rowCount} centros de formação actualizados`);
+
+      // Perfis de TODOS os utilizadores sem localização
+      const r3 = await client.query(
+        `UPDATE public.perfis SET provincia_id = $1, distrito_id = $2
+         WHERE (provincia_id IS NULL OR distrito_id IS NULL)
+           AND id IN (SELECT id FROM public.utilizadores WHERE role != 'master_nacional')`,
+        [sofalaId, beiraId]
+      );
+      console.log(`   ✅ ${r3.rowCount} perfis actualizados`);
+    } else {
+      console.warn('⚠️  Sofala ou Beira não encontrados nas tabelas geográficas!');
+    }
+
+    await client.query('COMMIT');
+    console.log('✅ Inicialização completa!');
+  } catch (err) {
+    if (client) await client.query('ROLLBACK');
+    console.error('❌ Erro na inicialização:', err.message);
+  } finally {
+    client.release();
+  }
+})();
 
 // Configuração do Multer para upload de ficheiros
 const storage = multer.diskStorage({
@@ -106,7 +242,7 @@ app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
 
     const result = await pool.query(
-      'SELECT u.*, p.nome_completo FROM public.utilizadores u LEFT JOIN public.perfis p ON u.id = p.id WHERE u.email = $1',
+      'SELECT u.*, p.nome_completo, p.provincia_id, p.distrito_id FROM public.utilizadores u LEFT JOIN public.perfis p ON u.id = p.id WHERE u.email = $1',
       [email]
     );
 
@@ -133,7 +269,9 @@ app.post('/api/auth/login', async (req, res) => {
         id: user.id,
         email: user.email,
         role: user.role,
-        nome_completo: user.nome_completo
+        nome_completo: user.nome_completo,
+        provincia_id: user.provincia_id,
+        distrito_id: user.distrito_id
       }
     });
   } catch (err) {
@@ -147,7 +285,9 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/candidaturas', async (req, res) => {
   try {
     const query = `
-      SELECT c.*, 
+      SELECT c.*,
+             c.distrito_actuacao_id as distrito_id,
+             c.provincia_actuacao_id as provincia_id,
              p.nome as processo_nome,
              cat.nome as categoria_nome,
              COALESCE(c.email, u.email) as email,
@@ -754,6 +894,8 @@ app.get('/api/turmas', async (req, res) => {
       SELECT t.*,
              p.nome as processo_nome,
              c.nome as centro_nome,
+             c.provincia_id as provincia_id,
+             c.distrito_id as distrito_id,
              cat.nome as categoria_nome,
              fp.nome_completo as formador_principal_nome,
              fa.nome_completo as formador_auxiliar_nome
@@ -1021,6 +1163,126 @@ app.post('/api/turmas/:id/pauta', async (req, res) => {
   }
 });
 
+// ==================== GESTÃO DE LOGÍSTICA (MODELOS E UNIDADES) ====================
+
+// Listar todos os modelos de equipa (Brigada, MMV, Agentes) com suas funções
+app.get('/api/logistica/modelos', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT m.*, 
+             json_agg(json_build_object('id', f.id, 'cargo', f.cargo, 'objetivo', f.objetivo)) as funcoes
+      FROM public.modelos_equipa m
+      LEFT JOIN public.funcoes_modelo f ON f.modelo_id = m.id
+      GROUP BY m.id
+      ORDER BY m.criado_em DESC
+    `);
+    res.json({ modelos: result.rows });
+  } catch (err) {
+    console.error('Erro ao listar modelos:', err);
+    res.status(500).json({ error: 'Erro ao listar modelos de equipa' });
+  }
+});
+
+// Criar novo modelo de equipa com funções
+app.post('/api/logistica/modelos', async (req, res) => {
+  console.log('📡 RECEBIDA REQUISIÇÃO PARA CRIAR MODELO:', req.body.nome);
+  const client = await pool.connect();
+  try {
+    const { nome, processo_id, tipo, num_membros, observacoes, funcoes } = req.body;
+    
+    await client.query('BEGIN');
+    
+    const modelRes = await client.query(
+      `INSERT INTO public.modelos_equipa (nome, processo_id, tipo, num_membros, observacoes) 
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [nome, processo_id, tipo, num_membros, observacoes]
+    );
+    
+    const modeloId = modelRes.rows[0].id;
+    
+    if (funcoes && funcoes.length > 0) {
+      for (const f of funcoes) {
+        await client.query(
+          `INSERT INTO public.funcoes_modelo (modelo_id, cargo, objetivo) VALUES ($1, $2, $3)`,
+          [modeloId, f.cargo, f.objetivo]
+        );
+      }
+    }
+    
+    await client.query('COMMIT');
+    res.json({ success: true, id: modeloId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Erro ao criar modelo:', err);
+    res.status(500).json({ error: 'Erro ao criar modelo de equipa' });
+  } finally {
+    client.release();
+  }
+});
+
+// Listar unidades operacionais (Brigadas, Mesas) e seus membros
+app.get('/api/logistica/unidades', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT u.*, m.nome as modelo_nome, m.tipo as modelo_tipo,
+             json_agg(json_build_object(
+               'funcao_id', um.funcao_id, 
+               'candidato_id', um.candidatura_id,
+               'candidato_nome', p.nome_completo,
+               'cargo', fm.cargo
+             )) as membros
+      FROM public.unidades_operacionais u
+      JOIN public.modelos_equipa m ON u.modelo_id = m.id
+      LEFT JOIN public.unidade_membros um ON um.unidade_id = u.id
+      LEFT JOIN public.funcoes_modelo fm ON um.funcao_id = fm.id
+      LEFT JOIN public.candidaturas c ON um.candidatura_id = c.id
+      LEFT JOIN public.perfis p ON c.utilizador_id = p.id
+      GROUP BY u.id, m.nome, m.tipo
+      ORDER BY u.criado_em DESC
+    `);
+    res.json({ unidades: result.rows });
+  } catch (err) {
+    console.error('Erro ao listar unidades:', err);
+    res.status(500).json({ error: 'Erro ao listar unidades operacionais' });
+  }
+});
+
+// Criar nova unidade operacional com alocação de membros
+app.post('/api/logistica/unidades', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { nome, modelo_id, localizacao, status_logistico, membros } = req.body;
+    
+    await client.query('BEGIN');
+    
+    const unitRes = await client.query(
+      `INSERT INTO public.unidades_operacionais (nome, modelo_id, localizacao, status_logistico) 
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [nome, modelo_id, localizacao, status_logistico]
+    );
+    
+    const unidadeId = unitRes.rows[0].id;
+    
+    if (membros && membros.length > 0) {
+      for (const m of membros) {
+        await client.query(
+          `INSERT INTO public.unidade_membros (unidade_id, funcao_id, candidatura_id) VALUES ($1, $2, $3)`,
+          [unidadeId, m.funcao_id, m.candidato_id]
+        );
+      }
+    }
+    
+    await client.query('COMMIT');
+    res.json({ success: true, id: unidadeId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Erro ao criar unidade:', err);
+    res.status(500).json({ error: 'Erro ao criar unidade operacional' });
+  } finally {
+    client.release();
+  }
+});
+
 // ==================== SISTEMA DE NOTIFICAÇÕES E RELATÓRIOS ====================
 app.get('/api/relatorios/estatisticas', async (req, res) => {
   try {
@@ -1188,6 +1450,34 @@ app.get('/api/config/distritos/:provinciaId', async (req, res) => {
   } catch (err) {
     console.error('Erro ao listar distritos:', err);
     res.status(500).json({ error: 'Erro ao listar distritos' });
+  }
+});
+
+app.get('/api/config/postos/:distritoId', async (req, res) => {
+  try {
+    const { distritoId } = req.params;
+    if (!isUUID(distritoId)) {
+      return res.status(400).json({ error: 'ID de distrito inválido' });
+    }
+    const result = await pool.query('SELECT * FROM public.postos_administrativos WHERE distrito_id = $1 ORDER BY nome', [distritoId]);
+    res.json({ postos: result.rows });
+  } catch (err) {
+    console.error('Erro ao listar postos:', err);
+    res.status(500).json({ error: 'Erro ao listar postos' });
+  }
+});
+
+app.get('/api/config/localidades/:postoId', async (req, res) => {
+  try {
+    const { postoId } = req.params;
+    if (!isUUID(postoId)) {
+      return res.status(400).json({ error: 'ID de posto inválido' });
+    }
+    const result = await pool.query('SELECT * FROM public.localidades WHERE posto_id = $1 ORDER BY nome', [postoId]);
+    res.json({ localidades: result.rows });
+  } catch (err) {
+    console.error('Erro ao listar localidades:', err);
+    res.status(500).json({ error: 'Erro ao listar localidades' });
   }
 });
 

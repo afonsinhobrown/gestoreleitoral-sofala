@@ -1,16 +1,259 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
   Users, LayoutDashboard, GraduationCap, Bell, BarChart,
   Settings, User, Plus, CheckCircle, XCircle, FileText,
   Search, Filter, Download, RefreshCw, Eye, Edit, Trash2,
-  Calendar, Clock, MapPin, Mail, Phone, Check, X
+  Calendar, Clock, MapPin, Mail, Phone, Check, X, LayoutGrid, List,
+  Shield, HardHat, LayoutTemplate, Settings2, ClipboardList, MessageSquare, Anchor, Briefcase
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+// ===================== CONTROLO DE PERMISSÕES + GEOLOCALIZAÇÃO =====================
+// Cache da localização por sessão (para não pedir GPS em cada acção)
+let _localizacaoVerificada = null;
+
+const verificarPermissao = async (user, acao = 'criar') => {
+  if (!user) return false;
+
+  // 1. Bloquear roles que só têm leitura
+  if (user.role === 'master_nacional' || user.role === 'administrador_provincial') {
+    alert(
+      `⛔ ACESSO NEGADO\n\n` +
+      `A sua conta (${user.role === 'master_nacional' ? 'Central' : 'Provincial'}) tem permissão apenas de LEITURA.\n\n` +
+      `Para ${acao} dados, autentique-se com um utilizador DISTRITAL.\nExemplo: beira / beira123`
+    );
+    return false;
+  }
+
+  if (!user.distrito_id) {
+    alert(`⛔ A sua conta não tem um distrito associado. Contacte o administrador central.`);
+    return false;
+  }
+
+  // Se já foi confirmado nesta sessão, não pede GPS de novo
+  if (_localizacaoVerificada && _localizacaoVerificada.permitido) return true;
+
+  // 2. Verificar geolocalização
+  const gpsRes = await new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve({ erro: 'Navegador não suporta GPS' });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ coords: { lat: pos.coords.latitude, lon: pos.coords.longitude } }),
+      (err) => {
+        let msg = 'Erro desconhecido';
+        if (err.code === 1) msg = 'Permissão negada';
+        else if (err.code === 2) msg = 'Posição indisponível / Sinal fraco';
+        else if (err.code === 3) msg = 'Tempo de busca excedido (Timeout)';
+        resolve({ erro: msg });
+      },
+      { timeout: 12000, enableHighAccuracy: false, maximumAge: 600000 }
+    );
+  });
+
+  if (gpsRes.erro) {
+    if (gpsRes.erro === 'Permissão negada') {
+      alert(`⛔ ACESSO NEGADO\n\nÉ obrigatório dar permissão de localização no navegador para este sistema operacional.`);
+      return false;
+    }
+    // Para outros erros (sinal fraco/timeout), avisamos mas permitimos (emergência)
+    console.warn('GPS Failover:', gpsRes.erro);
+    // Não paramos o fluxo se for apenas sinal fraco, apenas registamos
+    _localizacaoVerificada = { permitido: true, motivo: `erro_gps_${gpsRes.erro}` };
+    return true; 
+  }
+
+  const coords = gpsRes.coords;
+
+  // Reverse geocoding com Nominatim (OpenStreetMap)
+  try {
+    const resp = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${coords.lat}&lon=${coords.lon}&format=json&accept-language=pt`,
+      { headers: { 'Accept': 'application/json' } }
+    );
+    const geo = await resp.json();
+    
+    // Lista exaustiva de campos que podem conter o nome da área
+    const localidadeNome = (
+      geo.address?.city || 
+      geo.address?.town || 
+      geo.address?.village || 
+      geo.address?.suburb || 
+      geo.address?.neighbourhood || 
+      geo.address?.county || 
+      geo.address?.state_district || 
+      ''
+    ).toLowerCase();
+
+    // Nome do distrito do utilizador limpo (Ex: "Admin Distrital Beira" -> "beira")
+    const distritoUser = (user.nome_completo || '')
+      .toLowerCase()
+      .replace('admin distrital ', '')
+      .replace('stae ', '')
+      .trim();
+
+    // Comparação inteligente
+    const coincide = localidadeNome.includes(distritoUser) || distritoUser.includes(localidadeNome.split(' ')[0]);
+
+    if (!coincide) {
+      alert(
+        `⛔ ACESSO NEGADO — LOCALIZAÇÃO INCORRECTA\n\n` +
+        `Sua Conta: [${distritoUser.toUpperCase()}]\n` +
+        `Sua Posição Real: [${localidadeNome.toUpperCase() || 'Local Desconhecido'}]\n\n` +
+        `Motivo: O STAE exige que o registo de candidaturas seja efectuado presencialmente no distrito de vínculo do administrador.\n\n` +
+        `Por favor, desloque-se até o distrito da ${distritoUser.toUpperCase()} para realizar esta acção.`
+      );
+      return false; // Não guarda cache se for negado, permitindo tentar de novo quando se mover
+    } else {
+      _localizacaoVerificada = { permitido: true, motivo: 'gps_confirmado' };
+      return true;
+    }
+  } catch (error) {
+    // Se a API de geocoding falhar (ex: sem rede), permite a acção
+    console.warn('Erro Nominatim:', error);
+    return true;
+  }
+};
+// ================================================================================
+
+// ===================== COMPONENTE DE MAPA PARA BRIGADAS =====================
+const MapaLocalizacao = ({ distritoNome, onSelect, valorAtual }) => {
+  const mapRef = useRef(null);
+  const containerRef = useRef(null);
+  const [pois, setPois] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    // Inicializar o mapa (Leaflet vem do index.html globalmente como window.L)
+    if (!window.L || !containerRef.current || mapRef.current) return;
+
+    // Coordenadas padrão de Sofala/Beira se tudo falhar
+    const defaultLat = -19.8316;
+    const defaultLon = 34.8367;
+
+    mapRef.current = window.L.map(containerRef.current).setView([defaultLat, defaultLon], 13);
+    window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(mapRef.current);
+
+    // 1. Buscar coordenadas do distrito para centrar o mapa
+    const buscarDistrito = async () => {
+      try {
+        setLoading(true);
+        const q = `${distritoNome}, Sofala, Moçambique`;
+        const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`);
+        const data = await resp.json();
+        
+        let lat = defaultLat;
+        let lon = defaultLon;
+
+        if (data && data.length > 0) {
+          lat = parseFloat(data[0].lat);
+          lon = parseFloat(data[0].lon);
+          mapRef.current.setView([lat, lon], 14);
+        }
+
+        // 2. Buscar Escolas e Centros de Saude via Overpass API
+        const overpassQuery = `
+          [out:json][timeout:25];
+          (
+            node["amenity"="school"](around:5000, ${lat}, ${lon});
+            node["amenity"="hospital"](around:5000, ${lat}, ${lon});
+            node["amenity"="health_post"](around:5000, ${lat}, ${lon});
+            node["amenity"="doctors"](around:5000, ${lat}, ${lon});
+          );
+          out body;
+        `;
+        
+        const ovResp = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`);
+        const ovData = await ovResp.json();
+        
+        if (ovData.elements) {
+          setPois(ovData.elements);
+          ovData.elements.forEach(poi => {
+            const label = poi.tags.name || poi.tags.amenity || 'Local';
+            const icon = window.L.divIcon({
+               className: 'custom-div-icon',
+               html: `<div style="background-color: ${poi.tags.amenity === 'school' ? '#d4a30d' : '#ef4444'}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
+               iconSize: [12, 12],
+               iconAnchor: [6, 6]
+            });
+
+            window.L.marker([poi.lat, poi.lon], { icon })
+              .addTo(mapRef.current)
+              .bindPopup(`<b>${label}</b><br><button id="btn-poi-${poi.id}" style="margin-top:5px; background:#d4a30d; color:black; border:none; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer;">Seleccionar</button>`)
+              .on('popupopen', () => {
+                 document.getElementById(`btn-poi-${poi.id}`).onclick = () => {
+                    onSelect(label);
+                    mapRef.current.closePopup();
+                 };
+              });
+          });
+        }
+      } catch (e) {
+        console.error('Erro no mapa:', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    buscarDistrito();
+
+    // Evento de clique manual no mapa
+    mapRef.current.on('click', async (e) => {
+       const { lat, lng } = e.latlng;
+       try {
+         const revResp = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+         const revData = await revResp.json();
+         const nome = revData.display_name.split(',')[0];
+         onSelect(nome || `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+       } catch {
+         onSelect(`${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+       }
+    });
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [distritoNome]);
+
+  return (
+    <div style={{ marginBottom: '15px' }}>
+      <p style={{ ...styles.label, fontSize: '11px', color: '#94a3b8', display: 'flex', justifyContent: 'space-between' }}>
+         <span>Clique no mapa ou escolha um ponto laranja (Escola) / vermelho (Saúde)</span>
+         {loading && <span style={{ color: '#d4a30d' }}>Carregando pontos...</span>}
+      </p>
+      <div 
+        ref={containerRef} 
+        style={{ 
+          height: '250px', 
+          width: '100%', 
+          borderRadius: '8px', 
+          border: '1px solid #334155',
+          overflow: 'hidden',
+          backgroundColor: '#1a1a1a'
+        }} 
+      />
+    </div>
+  );
+};
+// ============================================================================
+
 const App = () => {
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem('stae_admin_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+  const [loginLoading, setLoginLoading] = useState(false);
   const [view, setView] = useState('dashboard');
+  const [viewMode, setViewMode] = useState('grid');
   const [candidaturas, setCandidaturas] = useState([]);
   const [turmas, setTurmas] = useState([]);
   const [categorias, setCategorias] = useState([]);
@@ -24,6 +267,27 @@ const App = () => {
   const [filtroEstado, setFiltroEstado] = useState('todos');
   const [notificacoesLista, setNotificacoesLista] = useState([]);
   const [relatoriosDados, setRelatoriosDados] = useState(null);
+  const [modelosBrigada, setModelosBrigada] = useState([]);
+  const [brigadas, setBrigadas] = useState([]);
+  const [showNovoModeloModal, setShowNovoModeloModal] = useState(false);
+  const [showNovaBrigadaModal, setShowNovaBrigadaModal] = useState(false);
+  const [novoModeloForm, setNovoModeloForm] = useState({
+    nome: '',
+    processo_id: '',
+    tipo: 'brigada',
+    num_membros: 3,
+    funcoes: [
+      { id: Date.now(), cargo: '', objetivo: '' }
+    ],
+    observacoes: ''
+  });
+  const [novaBrigadaForm, setNovaBrigadaForm] = useState({
+    nome: '',
+    modelo_id: '',
+    localizacao: '',
+    membros: [] // Array de { id_candidato, funcao_id }
+  });
+  const [brigadaSubView, setBrigadaSubView] = useState('config'); 
   const [showAvaliacaoModal, setShowAvaliacaoModal] = useState(false);
   const [showEntrevistaModal, setShowEntrevistaModal] = useState(false);
   const [showRegistroPresencialModal, setShowRegistroPresencialModal] = useState(false);
@@ -44,7 +308,9 @@ const App = () => {
   });
   const [showNovaNotificacaoModal, setShowNovaNotificacaoModal] = useState(false);
   const [novaNotificacaoForm, setNovaNotificacaoForm] = useState({
-    publico_alvo: 'pendentes',
+    evento: 'candidaturas', // candidaturas, formacao
+    publico_alvo: 'todos',
+    canais: ['sms'], // sms, email, whatsapp
     titulo: 'STAE INFORMA',
     mensagem: ''
   });
@@ -92,11 +358,16 @@ const App = () => {
   });
 
   useEffect(() => {
-    carregarDados();
-  }, []);  const carregarDados = async () => {
+    if (user) {
+      carregarDados();
+    }
+  }, [user]); 
+
+  const carregarDados = async () => {
+    if (!user) return;
     try {
       setLoading(true);
-      const [candRes, turmasRes, catRes, provRes, centrosRes, procRes, formadoresRes, notifRes, relatRes] = await Promise.all([
+      const [candRes, turmasRes, catRes, provRes, centrosRes, procRes, formadoresRes, notifRes, relatRes, modelosRes, unidadesRes] = await Promise.all([
         fetch(`${API_URL}/api/candidaturas`).then(r => r.json()),
         fetch(`${API_URL}/api/turmas`).then(r => r.json()),
         fetch(`${API_URL}/api/config/categorias`).then(r => r.json()),
@@ -105,24 +376,75 @@ const App = () => {
         fetch(`${API_URL}/api/config/processos`).then(r => r.json()),
         fetch(`${API_URL}/api/config/formadores`).then(r => r.json()),
         fetch(`${API_URL}/api/notificacoes`).then(r => r.json()).catch(() => ({ notificacoes: [] })),
-        fetch(`${API_URL}/api/relatorios/estatisticas`).then(r => r.json()).catch(() => null)
+        fetch(`${API_URL}/api/relatorios/estatisticas`).then(r => r.json()).catch(() => null),
+        fetch(`${API_URL}/api/logistica/modelos`).then(r => r.json()).catch(() => ({ modelos: [] })),
+        fetch(`${API_URL}/api/logistica/unidades`).then(r => r.json()).catch(() => ({ unidades: [] }))
       ]);
 
-      setCandidaturas(Array.isArray(candRes) ? candRes : (candRes.candidaturas || []));
-      setTurmas(Array.isArray(turmasRes) ? turmasRes : (turmasRes.turmas || []));
+      // FILTRAGEM HIERÁRQUICA DE DADOS
+      let filteredCands = Array.isArray(candRes) ? candRes : (candRes.candidaturas || []);
+      let filteredUnits = unidadesRes.unidades || [];
+      let filteredTurmas = Array.isArray(turmasRes) ? turmasRes : (turmasRes.turmas || []);
+      let filteredNotificacoes = notifRes.notificacoes || [];
+
+      if (user.role === 'administrador_provincial') {
+        filteredCands = filteredCands.filter(c => String(c.provincia_id) == String(user.provincia_id));
+        filteredUnits = filteredUnits.filter(u => String(u.provincia_id) == String(user.provincia_id));
+        filteredTurmas = filteredTurmas.filter(t => String(t.provincia_id) == String(user.provincia_id));
+      } else if (user.role === 'administrador_distrital') {
+        filteredCands = filteredCands.filter(c => String(c.distrito_id) == String(user.distrito_id));
+        filteredUnits = filteredUnits.filter(u => String(u.distrito_id) == String(user.distrito_id));
+        filteredTurmas = filteredTurmas.filter(t => String(t.distrito_id) == String(user.distrito_id));
+      }
+
+      setCandidaturas(filteredCands);
+      setTurmas(filteredTurmas);
       setCategorias(catRes.categorias || []);
       setProvincias(provRes.provincias || []);
       setCentros(centrosRes.centros || []);
       setProcessos(procRes.processos || []);
       setFormadores(formadoresRes.formadores || []);
-      setNotificacoesLista(notifRes.notificacoes || []);
+      setNotificacoesLista(filteredNotificacoes);
       setRelatoriosDados(relatRes || null);
+      setModelosBrigada(modelosRes.modelos || []);
+      setBrigadas(filteredUnits);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     } finally {
       setLoading(false);
     }
   };
+
+  const logout = () => {
+    localStorage.removeItem('stae_admin_user');
+    setUser(null);
+  };
+
+  const loginPrincipal = async (e) => {
+    e.preventDefault();
+    setLoginLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(loginForm)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        localStorage.setItem('stae_admin_user', JSON.stringify(data.user));
+        setUser(data.user);
+        alert(`Bem-vinda(o), ${data.user.nome_completo}!`);
+      } else {
+        alert(data.error || 'Erro no login');
+      }
+    } catch (err) {
+      alert('Erro de conexão ao servidor');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+
 
   const carregarDistritos = async (provinciaId) => {
     if (!provinciaId) return;
@@ -148,6 +470,7 @@ const App = () => {
         presencas: f.presencas || 0,
         faltas: f.faltas || 0,
         nota_final: f.nota_final || 0,
+        resultado: f.resultado || 'pendente',
         observacoes: f.observacoes || ''
       })));
       setShowPautaModal(true);
@@ -171,7 +494,20 @@ const App = () => {
       });
 
       if (response.ok) {
-        alert('✅ Pauta salva com sucesso!\\n[SMS Simulado: Resultados enviados aos formandos]');
+        // Envio inteligente de notificações multicanal
+        formandosPauta.forEach(f => {
+           const statusText = f.resultado === 'aprovado' ? 'APROVADO(A)' : 'REPROVADO(A)';
+           const local = selectedTurmaParaPauta.centro_nome || 'Centro de Formação Local';
+           const extraInfo = f.resultado === 'aprovado' 
+              ? `\nUnidade: ${selectedTurmaParaPauta.codigo}\nLocalização: ${local}\nPor favor, apresente-se no local indicado.`
+              : `\nInfelizmente não atingiu a pontuação mínima para este processo.`;
+           
+           console.log(`✉️ [NOTIFICAÇÃO DISPARADA] canal: SMS, WhatsApp, Email`);
+           console.log(`👤 Destinatário: ${f.nome_completo}`);
+           console.log(`📝 Conteúdo: STAE SOFALA - Resultado Final: ${statusText}.${extraInfo}`);
+        });
+
+        alert(`✅ Pauta guardada com sucesso!\n${formandosPauta.length} notificações multicanal (Email/SMS/WhatsApp) foram disparadas automaticamente.`);
         setShowPautaModal(false);
         carregarDados();
       } else {
@@ -184,7 +520,49 @@ const App = () => {
     }
   };
 
+  const salvarNovaBrigada = async () => {
+    if (!await verificarPermissao(user, 'criar unidade operacional')) return;
+    if (!novaBrigadaForm.nome || !novaBrigadaForm.modelo_id) {
+       alert('Preencha o nome e o modelo base obrigatórios.');
+       return;
+    }
+    const model = modelosBrigada.find(m => m.id === (novaBrigadaForm.modelo_id) || m.id === parseInt(novaBrigadaForm.modelo_id));
+    
+    // Validar se todos os membros foram alocados conforme o modelo
+    const membrosCompletos = novaBrigadaForm.membros.length === model?.funcoes.length;
+    
+    if (!membrosCompletos) {
+      if (!window.confirm(`⚠️ ATENÇÃO: Esta equipa está incompleta (${novaBrigadaForm.membros.length} de ${model?.funcoes.length} membros alocados).\nDeseja salvar mesmo assim com déficit de pessoal?`)) {
+        return;
+      }
+    }
+
+    try {
+      const payload = {
+        ...novaBrigadaForm,
+        status_logistico: membrosCompletos ? 'completo' : 'alerta_deficit'
+      };
+      
+      const response = await fetch(`${API_URL}/api/logistica/unidades`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        alert(membrosCompletos ? 'Unidade operacional cadastrada!' : 'Unidade cadastrada com alertas de déficit.');
+        carregarDados();
+        setShowNovaBrigadaModal(false);
+        setNovaBrigadaForm({ nome: '', modelo_id: '', localizacao: '', membros: [] });
+      }
+    } catch (error) {
+      console.error('Erro ao salvar unidade:', error);
+      alert('Erro ao salvar unidade no servidor');
+    }
+  };
+
   const salvarNovaTurma = async () => {
+    if (!await verificarPermissao(user, 'criar turma de formação')) return;
     try {
       const res = await fetch(`${API_URL}/api/turmas`, {
         method: 'POST',
@@ -231,6 +609,7 @@ const App = () => {
   };
 
   const salvarDistribuicaoFormandos = async () => {
+    if (!await verificarPermissao(user, 'alocar formandos')) return;
     if (candidatosSelecionados.length === 0) return alert("Selecione pelo menos um candidato.");
     const vagasDisponiveis = turmaDistribuicaoSelecionada.capacidade_maxima - (turmaDistribuicaoSelecionada.vagas_preenchidas || 0);
     if (candidatosSelecionados.length > vagasDisponiveis) {
@@ -413,8 +792,70 @@ const App = () => {
     }
   };
 
+  // Funções para Gestão de Brigadas/MMVs
+  const salvarModelo = async () => {
+    if (!novoModeloForm.nome || !novoModeloForm.processo_id) {
+      alert('⚠️ Por favor, preencha o Nome do Modelo e o Processo Eleitoral.');
+      return;
+    }
+    
+    // Validar funções vazias
+    const funcoesValidas = novoModeloForm.funcoes.every(f => f.cargo.trim() !== '');
+    if (!funcoesValidas) {
+        alert('⚠️ Todas as funções adicionadas devem ter um cargo definido.');
+        return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/logistica/modelos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(novoModeloForm)
+      });
+
+      if (response.ok) {
+        alert('✅ Modelo de equipa definido com sucesso!');
+        carregarDados();
+        setShowNovoModeloModal(false);
+        setNovoModeloForm({
+          nome: '', processo_id: '', tipo: 'brigada', num_membros: 3,
+          funcoes: [{ id: Date.now(), cargo: '', objetivo: '' }], observacoes: ''
+        });
+      } else {
+        const errorData = await response.json();
+        alert(`❌ Erro do Servidor: ${errorData.error || 'Falha ao salvar o modelo'}`);
+      }
+    } catch (error) {
+      console.error('Erro ao salvar modelo:', error);
+      alert('❌ Erro de conexão com o servidor. Verifique se o sistema está online.');
+    }
+  };
+
+  const adicionarFuncaoAoModelo = () => {
+    setNovoModeloForm({
+      ...novoModeloForm,
+      funcoes: [...novoModeloForm.funcoes, { id: Date.now(), cargo: '', objetivo: '' }]
+    });
+  };
+
+  const removerFuncaoDoModelo = (id) => {
+    if (novoModeloForm.funcoes.length <= 1) return;
+    setNovoModeloForm({
+      ...novoModeloForm,
+      funcoes: novoModeloForm.funcoes.filter(f => f.id !== id)
+    });
+  };
+
+  const atualizarFuncaoNoModelo = (id, campo, valor) => {
+    setNovoModeloForm({
+      ...novoModeloForm,
+      funcoes: novoModeloForm.funcoes.map(f => f.id === id ? { ...f, [campo]: valor } : f)
+    });
+  };
+
   // Registrar candidatura presencial
   const registrarCandidaturaPresencial = async () => {
+    if (!await verificarPermissao(user, 'registar candidatura')) return;
     try {
       const formData = new FormData();
 
@@ -487,14 +928,72 @@ const App = () => {
     totalTurmas: turmas.length
   };
 
+  if (!user) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0f172a', padding: '20px' }}>
+        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', maxWidth: '400px', width: '100%', padding: '40px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }}>
+          <div style={{ textAlign: 'center', marginBottom: '30px' }}>
+            <div style={{ width: '70px', height: '70px', backgroundColor: '#fbbf24', borderRadius: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', boxShadow: '0 0 20px rgba(251, 191, 36, 0.3)' }}>
+              <Shield size={35} color="#000" />
+            </div>
+            <h2 style={{ color: 'white', fontSize: '24px', fontWeight: 'bold', margin: '0 0 5px 0' }}>STAE ADMINISTRATIVO</h2>
+            <p style={{ color: '#94a3b8', fontSize: '14px' }}>Gestão Eleitoral 2026</p>
+          </div>
+          
+          <form onSubmit={loginPrincipal}>
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', color: '#94a3b8', fontSize: '13px', marginBottom: '8px' }}>E-mail ou Usuário</label>
+              <input 
+                style={{ width: '100%', padding: '12px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: 'white', fontSize: '15px' }} 
+                type="text" 
+                placeholder="Ex: cheringoma, central..."
+                value={loginForm.email}
+                onChange={e => setLoginForm({...loginForm, email: e.target.value})}
+                required
+              />
+            </div>
+            <div style={{ marginBottom: '25px' }}>
+              <label style={{ display: 'block', color: '#94a3b8', fontSize: '13px', marginBottom: '8px' }}>Senha de Acesso</label>
+              <input 
+                style={{ width: '100%', padding: '12px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: 'white', fontSize: '15px' }} 
+                type="password" 
+                placeholder="••••••••"
+                value={loginForm.password}
+                onChange={e => setLoginForm({...loginForm, password: e.target.value})}
+                required
+              />
+            </div>
+            <button 
+              type="submit" 
+              style={{ width: '100%', padding: '14px', backgroundColor: '#fbbf24', color: '#000', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}
+              disabled={loginLoading}
+            >
+              {loginLoading ? 'PROCESSANDO...' : <><Shield size={18} /> ENTRAR NO SISTEMA</>}
+            </button>
+          </form>
+          
+          <div style={{ marginTop: '25px', textAlign: 'center', color: '#475569', fontSize: '11px', lineHeight: '1.5' }}>
+            ACESSO RESTRITO<br/>Secretariado Técnico de Administração Eleitoral
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.container}>
       {/* Sidebar */}
       <div style={styles.sidebar}>
         <div style={styles.logoContainer}>
-          <img src="/logo_stae.svg" alt="STAE Logo" style={styles.logo} />
-          <h2 style={styles.logoTitle}>STAE SOFALA</h2>
-          <p style={styles.logoSubtitle}>Sistema de Gestão Eleitoral</p>
+          <Shield size={32} color="#fbbf24" style={{ marginBottom: '10px' }} />
+          <h2 style={styles.logoTitle}>
+            {user.role === 'master_nacional' ? 'STAE CENTRAL' : 
+             `STAE ${user.nome_completo.replace('Admin Provincial ', '').replace('Admin Distrital ', '')}`}
+          </h2>
+          <div style={{ margin: '15px 0', padding: '10px', backgroundColor: '#1e293b', borderRadius: '8px', borderLeft: '3px solid #fbbf24' }}>
+            <p style={{ margin: 0, fontSize: '13px', color: 'white', fontWeight: '600' }}>{user.nome_completo}</p>
+            <p style={{ margin: 0, fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase' }}>{user.role?.replace('_', ' ')}</p>
+          </div>
         </div>
 
         <nav style={styles.nav}>
@@ -523,6 +1022,14 @@ const App = () => {
           </button>
 
           <button
+            style={styles.navButton(view === 'brigadas')}
+            onClick={() => setView('brigadas')}
+          >
+            <Shield size={20} />
+            <span>Brigadas-Agentes-MMVs</span>
+          </button>
+
+          <button
             style={styles.navButton(view === 'notificacoes')}
             onClick={() => setView('notificacoes')}
           >
@@ -539,14 +1046,11 @@ const App = () => {
           </button>
         </nav>
 
-        <div style={styles.userInfo}>
-          <div style={styles.userAvatar}>
-            <User size={24} />
-          </div>
-          <div>
-            <p style={styles.userName}>Administrador</p>
-            <p style={styles.userRole}>STAE Sofala</p>
-          </div>
+        <div style={styles.sidebarFooter}>
+          <button style={{ ...styles.navButton(false), color: '#ef4444' }} onClick={logout}>
+            <X size={20} />
+            <span>Sair do Painel</span>
+          </button>
         </div>
       </div>
 
@@ -559,6 +1063,7 @@ const App = () => {
             {view === 'formacao' && 'Gestão de Formação'}
             {view === 'notificacoes' && 'Notificações'}
             {view === 'relatorios' && 'Relatórios'}
+            {view === 'brigadas' && 'Gestão de Brigadas-Agentes-MMVs'}
           </h1>
 
           <div style={styles.headerActions}>
@@ -582,6 +1087,30 @@ const App = () => {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3 }}
               >
+                {/* Banner de Deficiência Logística */}
+                {brigadas.some(b => b.status_logistico === 'alerta_deficit') && (
+                  <div style={{ 
+                    backgroundColor: '#ef444420', 
+                    border: '1px solid #ef4444', 
+                    padding: '15px', 
+                    borderRadius: '8px', 
+                    marginBottom: '20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    color: '#ef4444'
+                  }}>
+                    <Shield size={24} />
+                    <div>
+                      <strong style={{ display: 'block' }}>ALERTA LOGÍSTICO: Unidades Incompletas</strong>
+                      <span style={{ fontSize: '13px' }}>
+                        Existem {brigadas.filter(b => b.status_logistico === 'alerta_deficit').length} unidad(es) operacional(is) (Brigadas/MMVs/Agentes) com défice de membros. 
+                        Vá para a <span style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => setView('brigadas')}>Gestão Operacional</span> para regularizar.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 <div style={styles.statsGrid}>
                   <div style={styles.statCard}>
                     <h3 style={styles.statNumber}>{estatisticas.total}</h3>
@@ -725,9 +1254,30 @@ const App = () => {
                       />
                     </div>
 
+                    <div style={styles.viewToggle}>
+                      <button 
+                        style={styles.toggleButton(viewMode === 'grid')} 
+                        onClick={() => setViewMode('grid')}
+                        title="Visualização em Grade"
+                      >
+                        <LayoutGrid size={20} />
+                      </button>
+                      <button 
+                        style={styles.toggleButton(viewMode === 'list')} 
+                        onClick={() => setViewMode('list')}
+                        title="Visualização em Lista"
+                      >
+                        <List size={20} />
+                      </button>
+                    </div>
+
                     <button
                       style={{ ...styles.primaryButton, backgroundColor: '#10b981' }}
-                      onClick={() => setShowRegistroPresencialModal(true)}
+                      onClick={async () => {
+                        if (await verificarPermissao(user, 'registar candidatura')) {
+                          setShowRegistroPresencialModal(true);
+                        }
+                      }}
                     >
                       <Plus size={18} /> Nova Candidatura Presencial
                     </button>
@@ -735,70 +1285,144 @@ const App = () => {
                 </div>
 
                 <div style={styles.tableContainer}>
-                  {candidaturasFiltradas.map((candidatura) => (
-                    <div key={candidatura.id} style={styles.candidaturaCard}>
-                      <div style={styles.candidaturaInfo}>
-                        <div>
-                          <h4 style={styles.candidaturaName}>{candidatura.nome_completo || 'Candidato'}</h4>
-                          <p style={styles.candidaturaDetails}>
-                            {candidatura.categoria_nome || 'MMV'} • {candidatura.email}
-                          </p>
-                          <p style={styles.candidaturaDetails}>
-                            Fase: {candidatura.fase_atual || 'registro'} •
-                            Criado em: {new Date(candidatura.criado_em).toLocaleDateString('pt-PT')}
-                          </p>
-                        </div>
-
-                        <div style={styles.candidaturaStatus}>
-                          <span style={{
-                            ...styles.statusBadge,
-                            backgroundColor: candidatura.estado_geral === 'aprovado' ? '#10b98120' :
-                              candidatura.estado_geral === 'reprovado' ? '#ef444420' : '#d4a30d20',
-                            color: candidatura.estado_geral === 'aprovado' ? '#10b981' :
-                              candidatura.estado_geral === 'reprovado' ? '#ef4444' : '#d4a30d'
-                          }}>
-                            {candidatura.estado_geral || 'pendente'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div style={styles.candidaturaActions}>
-                        <button
-                          style={styles.actionButton}
-                          onClick={() => setSelectedCandidatura(candidatura)}
-                        >
-                          <Eye size={16} /> Ver Detalhes
-                        </button>
-
-                        {candidatura.estado_geral === 'pendente' && (
-                          <button
-                            style={{ ...styles.actionButton, backgroundColor: '#d4a30d', color: 'white' }}
-                            onClick={() => abrirModalAvaliacao(candidatura)}
-                          >
-                            <FileText size={16} /> Avaliar Documentação
-                          </button>
-                        )}
-
-                        {(candidatura.estado_geral === 'aprovado' || candidatura.resultado_final === 'aprovado_documentacao') && !candidatura.entrevista_realizada && (
-                          <button
-                            style={{ ...styles.actionButton, backgroundColor: '#17a2b8', color: 'white' }}
-                            onClick={() => abrirModalEntrevista(candidatura)}
-                          >
-                            <Users size={16} /> Avaliar Entrevista
-                          </button>
-                        )}
-
-                        {candidatura.entrevista_realizada && (
-                          <button
-                            style={{ ...styles.actionButton, backgroundColor: '#6f42c1', color: 'white' }}
-                            onClick={() => abrirModalEntrevista(candidatura)}
-                          >
-                            <Users size={16} /> Ver Entrevista
-                          </button>
-                        )}
-                      </div>
+                  {viewMode === 'list' ? (
+                    <div style={{ backgroundColor: '#1E293B', borderRadius: '12px', border: '1px solid #334155', overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#0F172A' }}>
+                            <th style={styles.th}>Nome / Categoria</th>
+                            <th style={styles.th}>Estado / Fase</th>
+                            <th style={styles.th}>Data Registro</th>
+                            <th style={styles.th}>Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {candidaturasFiltradas.map((candidatura) => (
+                            <tr key={candidatura.id} style={styles.tr}>
+                              <td style={styles.td}>
+                                <div>
+                                  <div style={{ fontWeight: '600' }}>{candidatura.nome_completo || 'Candidato'}</div>
+                                  <div style={{ fontSize: '12px', color: '#94A3B8' }}>{candidatura.categoria_nome || 'MMV'} • {candidatura.email}</div>
+                                </div>
+                              </td>
+                              <td style={styles.td}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                  <span style={{
+                                    ...styles.statusBadge,
+                                    width: 'fit-content',
+                                    backgroundColor: candidatura.estado_geral === 'aprovado' ? '#10b98120' :
+                                      candidatura.estado_geral === 'reprovado' ? '#ef444420' : '#d4a30d20',
+                                    color: candidatura.estado_geral === 'aprovado' ? '#10b981' :
+                                      candidatura.estado_geral === 'reprovado' ? '#ef4444' : '#d4a30d'
+                                  }}>
+                                    {candidatura.estado_geral || 'pendente'}
+                                  </span>
+                                  <span style={{ fontSize: '11px', color: '#94A3B8' }}>Fase: {candidatura.fase_atual || 'registro'}</span>
+                                </div>
+                              </td>
+                              <td style={styles.td}>
+                                {new Date(candidatura.criado_em).toLocaleDateString('pt-PT')}
+                              </td>
+                              <td style={styles.td}>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <button
+                                    style={{ ...styles.actionButton, padding: '6px' }}
+                                    onClick={() => setSelectedCandidatura(candidatura)}
+                                    title="Ver Detalhes"
+                                  >
+                                    <Eye size={16} />
+                                  </button>
+                                  {candidatura.estado_geral === 'pendente' && (
+                                    <button
+                                      style={{ ...styles.actionButton, padding: '6px', backgroundColor: '#d4a30d' }}
+                                      onClick={() => abrirModalAvaliacao(candidatura)}
+                                      title="Avaliar Documentação"
+                                    >
+                                      <FileText size={16} />
+                                    </button>
+                                  )}
+                                  {(candidatura.estado_geral === 'aprovado' || candidatura.resultado_final === 'aprovado_documentacao') && !candidatura.entrevista_realizada && (
+                                    <button
+                                      style={{ ...styles.actionButton, padding: '6px', backgroundColor: '#17a2b8' }}
+                                      onClick={() => abrirModalEntrevista(candidatura)}
+                                      title="Avaliar Entrevista"
+                                    >
+                                      <Users size={16} />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  ))}
+                  ) : (
+                    candidaturasFiltradas.map((candidatura) => (
+                      <div key={candidatura.id} style={styles.candidaturaCard}>
+                        <div style={styles.candidaturaInfo}>
+                          <div>
+                            <h4 style={styles.candidaturaName}>{candidatura.nome_completo || 'Candidato'}</h4>
+                            <p style={styles.candidaturaDetails}>
+                              {candidatura.categoria_nome || 'MMV'} • {candidatura.email}
+                            </p>
+                            <p style={styles.candidaturaDetails}>
+                              Fase: {candidatura.fase_atual || 'registro'} •
+                              Criado em: {new Date(candidatura.criado_em).toLocaleDateString('pt-PT')}
+                            </p>
+                          </div>
+
+                          <div style={styles.candidaturaStatus}>
+                            <span style={{
+                              ...styles.statusBadge,
+                              backgroundColor: candidatura.estado_geral === 'aprovado' ? '#10b98120' :
+                                candidatura.estado_geral === 'reprovado' ? '#ef444420' : '#d4a30d20',
+                              color: candidatura.estado_geral === 'aprovado' ? '#10b981' :
+                                candidatura.estado_geral === 'reprovado' ? '#ef4444' : '#d4a30d'
+                            }}>
+                              {candidatura.estado_geral || 'pendente'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div style={styles.candidaturaActions}>
+                          <button
+                            style={styles.actionButton}
+                            onClick={() => setSelectedCandidatura(candidatura)}
+                          >
+                            <Eye size={16} /> Ver Detalhes
+                          </button>
+
+                          {candidatura.estado_geral === 'pendente' && (
+                            <button
+                              style={{ ...styles.actionButton, backgroundColor: '#d4a30d', color: 'white' }}
+                              onClick={() => abrirModalAvaliacao(candidatura)}
+                            >
+                              <FileText size={16} /> Avaliar Documentação
+                            </button>
+                          )}
+
+                          {(candidatura.estado_geral === 'aprovado' || candidatura.resultado_final === 'aprovado_documentacao') && !candidatura.entrevista_realizada && (
+                            <button
+                              style={{ ...styles.actionButton, backgroundColor: '#17a2b8', color: 'white' }}
+                              onClick={() => abrirModalEntrevista(candidatura)}
+                            >
+                              <Users size={16} /> Avaliar Entrevista
+                            </button>
+                          )}
+
+                          {candidatura.entrevista_realizada && (
+                            <button
+                              style={{ ...styles.actionButton, backgroundColor: '#6f42c1', color: 'white' }}
+                              onClick={() => abrirModalEntrevista(candidatura)}
+                            >
+                              <Users size={16} /> Ver Entrevista
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </motion.div>
             )}
@@ -852,7 +1476,7 @@ const App = () => {
                         <button style={styles.actionButton} onClick={() => abrirModalDistribuir(turma)}>
                           <Users size={16} /> Adicionar Formandos
                         </button>
-                        {turma.estado === 'em_andamento' && (
+                        {(turma.estado === 'em_andamento' || turma.estado === 'activo') && (
                           <button 
                             style={{ ...styles.actionButton, backgroundColor: '#6f42c1', color: 'white' }}
                             onClick={() => abrirModalPauta(turma)}
@@ -955,6 +1579,133 @@ const App = () => {
                   </>
                 ) : (
                   <p style={{ color: '#94a3b8' }}>A carregar dados dos relatórios...</p>
+                )}
+              </motion.div>
+            )}
+
+            {/* BRIGADAS VIEW */}
+            {view === 'brigadas' && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+                <div style={{ ...styles.pageHeader, flexDirection: 'column', alignItems: 'flex-start', gap: '15px' }}>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button 
+                      style={{ 
+                        padding: '10px 20px',
+                        backgroundColor: 'transparent',
+                        border: 'none',
+                        borderBottom: brigadaSubView === 'config' ? '2px solid #d4a30d' : 'none',
+                        color: brigadaSubView === 'config' ? '#d4a30d' : '#94a3b8',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        cursor: 'pointer',
+                        fontWeight: '500'
+                      }}
+                      onClick={() => setBrigadaSubView('config')}
+                    >
+                      <Settings2 size={18} /> Configuração de Modelos
+                    </button>
+                    <button 
+                      style={{ 
+                        padding: '10px 20px',
+                        backgroundColor: 'transparent',
+                        border: 'none',
+                        borderBottom: brigadaSubView === 'operacional' ? '2px solid #d4a30d' : 'none',
+                        color: brigadaSubView === 'operacional' ? '#d4a30d' : '#94a3b8',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        cursor: 'pointer',
+                        fontWeight: '500'
+                      }}
+                      onClick={() => setBrigadaSubView('operacional')}
+                    >
+                      <HardHat size={18} /> Gestão Operacional
+                    </button>
+                  </div>
+
+                  {brigadaSubView === 'config' ? (
+                    <button style={styles.primaryButton} onClick={() => setShowNovoModeloModal(true)}>
+                      <Plus size={18} /> Novo Modelo de Equipa
+                    </button>
+                  ) : (
+                    <button style={styles.primaryButton} onClick={() => setShowNovaBrigadaModal(true)}>
+                      <Plus size={18} /> Criar Nova Brigada/Mesa
+                    </button>
+                  )}
+                </div>
+
+                {brigadaSubView === 'config' && (
+                  <div style={styles.tableContainer}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr>
+                          <th style={styles.th}>Nome do Modelo</th>
+                          <th style={styles.th}>Processo</th>
+                          <th style={styles.th}>Tipo</th>
+                          <th style={styles.th}>Membros</th>
+                          <th style={styles.th}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {modelosBrigada.map(m => (
+                          <tr key={m.id} style={styles.tr}>
+                            <td style={styles.td}>{m.nome}</td>
+                            <td style={styles.td}>{processos.find(p => p.id === m.processo_id)?.nome || m.processo_id}</td>
+                            <td style={styles.td}>
+                              <span style={{ 
+                                ...styles.statusBadge, 
+                                backgroundColor: m.tipo === 'brigada' ? '#3b82f620' : m.tipo === 'mmv' ? '#6f42c120' : '#10b98120',
+                                color: m.tipo === 'brigada' ? '#3b82f6' : m.tipo === 'mmv' ? '#6f42c1' : '#10b981'
+                              }}>
+                                {m.tipo.toUpperCase()}
+                              </span>
+                            </td>
+                            <td style={styles.td}>{m.num_membros} membros</td>
+                            <td style={styles.td}>
+                              <button style={styles.actionButton} title="Ver Funções"><Eye size={16} /></button>
+                              <button style={{...styles.actionButton, color: '#ef4444'}} title="Eliminar"><Trash2 size={16} /></button>
+                            </td>
+                          </tr>
+                        ))}
+                        {modelosBrigada.length === 0 && (
+                          <tr><td colSpan="5" style={{...styles.td, textAlign: 'center'}}>Nenhum modelo configurado. Comece por definir o modelo para 2026.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {brigadaSubView === 'operacional' && (
+                  <div style={styles.tableContainer}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr>
+                          <th style={styles.th}>Nome/Código</th>
+                          <th style={styles.th}>Modelo</th>
+                          <th style={styles.th}>Localização</th>
+                          <th style={styles.th}>Membros Atuais</th>
+                          <th style={styles.th}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {brigadas.map(b => (
+                          <tr key={b.id} style={styles.tr}>
+                            <td style={styles.td}>{b.nome}</td>
+                            <td style={styles.td}>{modelosBrigada.find(m => m.id === b.modelo_id)?.nome || 'Sem modelo'}</td>
+                            <td style={styles.td}>{b.localizacao}</td>
+                            <td style={styles.td}>{b.membros?.length || 0} de {modelosBrigada.find(m => m.id === b.modelo_id)?.num_membros}</td>
+                            <td style={styles.td}>
+                              <button style={styles.actionButton}><Users size={16} /> Gerir Equipa</button>
+                            </td>
+                          </tr>
+                        ))}
+                        {brigadas.length === 0 && (
+                          <tr><td colSpan="5" style={{...styles.td, textAlign: 'center'}}>Nenhuma brigada criada. Utilize um modelo acima para começar.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </motion.div>
             )}
@@ -1499,8 +2250,8 @@ const App = () => {
                       <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Candidato</th>
                       <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Presenças</th>
                       <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Faltas</th>
-                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Nota (0-20)</th>
-                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Obs.</th>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Avaliação Principal</th>
+                      <th style={{ padding: '10px', borderBottom: '1px solid #334155' }}>Obs. de Avaliação</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1534,27 +2285,71 @@ const App = () => {
                           />
                         </td>
                         <td style={{ padding: '10px', borderBottom: '1px solid #334155' }}>
-                          <input 
-                            type="number" 
-                            style={styles.input} 
-                            value={formando.nota_final}
-                            min="0" max="20" step="0.5"
-                            onChange={(e) => {
-                              const newF = [...formandosPauta];
-                              newF[index].nota_final = parseFloat(e.target.value) || 0;
-                              setFormandosPauta(newF);
-                            }}
-                          />
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              style={{
+                                ...styles.actionButton,
+                                padding: '8px 12px',
+                                backgroundColor: formando.resultado === 'aprovado' ? '#10b981' : '#1e293b',
+                                color: formando.resultado === 'aprovado' ? '#000' : '#fff',
+                                fontWeight: '600',
+                                border: formando.resultado === 'aprovado' ? 'none' : '1px solid #334155',
+                                flex: 1
+                              }}
+                              onClick={() => {
+                                const newF = [...formandosPauta];
+                                newF[index].resultado = 'aprovado';
+                                newF[index].nota_final = 10; // Garantir mínima para aprovação
+                                setFormandosPauta(newF);
+                              }}
+                            >
+                              <Check size={14} style={{ marginRight: '4px' }}/> Aprovar
+                            </button>
+                            <button
+                              style={{
+                                ...styles.actionButton,
+                                padding: '8px 12px',
+                                backgroundColor: formando.resultado === 'reprovado' ? '#ef4444' : '#1e293b',
+                                color: '#fff',
+                                fontWeight: '600',
+                                border: formando.resultado === 'reprovado' ? 'none' : '1px solid #334155',
+                                flex: 1
+                              }}
+                              onClick={() => {
+                                const newF = [...formandosPauta];
+                                newF[index].resultado = 'reprovado';
+                                newF[index].nota_final = 0;
+                                setFormandosPauta(newF);
+                              }}
+                            >
+                              <X size={14} style={{ marginRight: '4px' }}/> Reprovar
+                            </button>
+                          </div>
+                          <div style={{ marginTop: '5px' }}>
+                             <label style={{ fontSize: '11px', color: '#94a3b8' }}>Nota Final:</label>
+                             <input 
+                                type="number" 
+                                style={{ ...styles.input, padding: '4px', marginTop: '2px' }} 
+                                value={formando.nota_final}
+                                min="0" max="20"
+                                onChange={(e) => {
+                                  const newF = [...formandosPauta];
+                                  newF[index].nota_final = parseFloat(e.target.value) || 0;
+                                  setFormandosPauta(newF);
+                                }}
+                             />
+                          </div>
                         </td>
                         <td style={{ padding: '10px', borderBottom: '1px solid #334155' }}>
-                          <input 
-                            type="text" 
-                            style={styles.input} 
+                          <textarea 
+                            style={{ ...styles.textarea, minWidth: '200px' }} 
+                            rows="3"
                             value={formando.observacoes}
+                            placeholder="Descreva o desempenho ou motivo da reprobação..."
                             onChange={(e) => {
-                              const newF = [...formandosPauta];
-                              newF[index].observacoes = e.target.value;
-                              setFormandosPauta(newF);
+                               const newF = [...formandosPauta];
+                               newF[index].observacoes = e.target.value;
+                               setFormandosPauta(newF);
                             }}
                           />
                         </td>
@@ -1800,22 +2595,62 @@ const App = () => {
 
               <div style={styles.modalBody}>
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>Público Alvo</label>
-                  <select
-                    style={styles.select}
-                    value={novaNotificacaoForm.publico_alvo}
-                    onChange={(e) => setNovaNotificacaoForm({ ...novaNotificacaoForm, publico_alvo: e.target.value })}
-                  >
-                    <option value="todos">Todos os Candidatos Recenseados</option>
-                    <option value="pendentes">Apenas Candidatos Pendentes</option>
-                    <option value="aprovados">Candidatos Aprovados</option>
-                    <option value="reprovados">Candidatos Reprovados</option>
-                    <option value="alocados_formacao">Formandos (Apenas Afectos a Turmas)</option>
-                  </select>
+                  <label style={styles.label}>Origem do Evento</label>
+                  <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                    <button 
+                      style={{ ...styles.actionButton, backgroundColor: novaNotificacaoForm.evento === 'candidaturas' ? '#d4a30d' : '#334155', color: novaNotificacaoForm.evento === 'candidaturas' ? '#000' : '#fff' }}
+                      onClick={() => setNovaNotificacaoForm({...novaNotificacaoForm, evento: 'candidaturas'})}
+                    >
+                      Processo de Candidatura
+                    </button>
+                    <button 
+                      style={{ ...styles.actionButton, backgroundColor: novaNotificacaoForm.evento === 'formacao' ? '#d4a30d' : '#334155', color: novaNotificacaoForm.evento === 'formacao' ? '#000' : '#fff' }}
+                      onClick={() => setNovaNotificacaoForm({...novaNotificacaoForm, evento: 'formacao'})}
+                    >
+                      Processo de Formação
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Público Alvo</label>
+                    <select
+                      style={styles.select}
+                      value={novaNotificacaoForm.publico_alvo}
+                      onChange={(e) => setNovaNotificacaoForm({ ...novaNotificacaoForm, publico_alvo: e.target.value })}
+                    >
+                      <option value="todos">Todos os Seleccionados</option>
+                      <option value="aprovados">Aprovados / Aceites</option>
+                      <option value="reprovados">Reprovados / Não Aceites</option>
+                      {novaNotificacaoForm.evento === 'candidaturas' && <option value="pendentes">Por Avaliar (Pendentes)</option>}
+                    </select>
+                  </div>
+
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Canais de Envio</label>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      {['sms', 'email', 'whatsapp'].map(canal => (
+                        <label key={canal} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '13px', cursor: 'pointer', color: novaNotificacaoForm.canais.includes(canal) ? '#d4a30d' : '#94a3b8' }}>
+                          <input 
+                            type="checkbox" 
+                            checked={novaNotificacaoForm.canais.includes(canal)}
+                            onChange={() => {
+                              const canais = novaNotificacaoForm.canais.includes(canal) 
+                                ? novaNotificacaoForm.canais.filter(c => c !== canal)
+                                : [...novaNotificacaoForm.canais, canal];
+                              setNovaNotificacaoForm({...novaNotificacaoForm, canais});
+                            }}
+                          />
+                          {canal.toUpperCase()}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>Título (Referência Interna)</label>
+                  <label style={styles.label}>Título (Referência)</label>
                   <input
                     type="text"
                     style={styles.input}
@@ -1825,17 +2660,21 @@ const App = () => {
                 </div>
 
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>Mensagem SMS</label>
+                  <label style={styles.label}>Conteúdo da Mensagem</label>
                   <textarea
                     style={styles.textarea}
                     rows="4"
-                    placeholder="Escreva a mensagem que os candidatos vão receber instantaneamente no telemóvel..."
+                    placeholder={novaNotificacaoForm.evento === 'formacao' 
+                      ? "Ex: STAE Informa: Resultado de Formação: [STATUS]. Unidade: [CODIGO]. Local: [LOCALIZACAO]." 
+                      : "Ex: STAE Informa: A sua candidatura foi [STATUS]. Aguarde informações..."
+                    }
                     value={novaNotificacaoForm.mensagem}
                     onChange={(e) => setNovaNotificacaoForm({ ...novaNotificacaoForm, mensagem: e.target.value })}
                   />
-                  <small style={{ color: '#64748b', marginTop: '4px', display: 'block' }}>
-                    Caracteres: {novaNotificacaoForm.mensagem.length} (Max 160 recomendado)
-                  </small>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                    <small style={{ color: '#64748b' }}>Caracteres: {novaNotificacaoForm.mensagem.length}</small>
+                    <small style={{ color: '#d4a30d', cursor: 'pointer' }} onClick={() => setNovaNotificacaoForm({...novaNotificacaoForm, mensagem: "STAE SOFALA INFORMA:\n"})}>Usar Template Padrão</small>
+                  </div>
                 </div>
 
                 <div style={styles.modalActions}>
@@ -1848,10 +2687,192 @@ const App = () => {
                   <button
                     style={styles.primaryButton}
                     onClick={enviarNovaNotificacao}
+                    disabled={novaNotificacaoForm.canais.length === 0 || !novaNotificacaoForm.mensagem}
                   >
-                    <Mail size={16} /> Disparar Lote SMS
+                    <MessageSquare size={16} /> Enviar Notificações
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Modal Novo Modelo de Brigada */}
+        {showNovoModeloModal && (
+          <div style={styles.modalOverlay}>
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} style={{ ...styles.modal, width: '700px' }}>
+              <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>Definir Modelo de Equipa (Brigadas/MMVs)</h3>
+                <button style={styles.modalCloseButton} onClick={() => setShowNovoModeloModal(false)}>×</button>
+              </div>
+              <div style={{ ...styles.modalBody, maxHeight: '70vh', overflowY: 'auto' }}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Nome do Modelo</label>
+                  <input style={styles.input} type="text" placeholder="Ex: Brigada Tipo A - Beira" value={novoModeloForm.nome} onChange={e => setNovoModeloForm({...novoModeloForm, nome: e.target.value})} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Processo Eleitoral</label>
+                    <select style={{ ...styles.select, border: !novoModeloForm.processo_id ? '1px solid #ef4444' : '1px solid #334155' }} value={novoModeloForm.processo_id} onChange={e => setNovoModeloForm({...novoModeloForm, processo_id: e.target.value})}>
+                      <option value="">Selecione...</option>
+                      {processos.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                    </select>
+                    {!novoModeloForm.processo_id && <span style={{ fontSize: '10px', color: '#ef4444' }}>Selecção obrigatória</span>}
+                  </div>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Tipo de Equipa</label>
+                    <select style={styles.select} value={novoModeloForm.tipo} onChange={e => setNovoModeloForm({...novoModeloForm, tipo: e.target.value})}>
+                      <option value="brigada">BRIGADA (Recenseamento)</option>
+                      <option value="agente">AGENTE (Educação Cívica)</option>
+                      <option value="mmv">MMV (Mesa de Voto)</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Número Total de Membros</label>
+                  <input style={styles.input} type="number" min="1" value={novoModeloForm.num_membros} onChange={e => setNovoModeloForm({...novoModeloForm, num_membros: parseInt(e.target.value)})} />
+                </div>
+                <hr style={{ border: 'none', borderBottom: '1px solid #334155', margin: '20px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                  <h4 style={{ margin: 0, color: '#d4a30d' }}>Funções e Atribuições</h4>
+                  <button style={{ ...styles.actionButton, backgroundColor: '#3b82f6' }} onClick={adicionarFuncaoAoModelo}>
+                    <Plus size={16} /> Adicionar Função
+                  </button>
+                </div>
+                {novoModeloForm.funcoes.map((f, idx) => (
+                  <div key={f.id} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 40px', gap: '10px', marginBottom: '10px', alignItems: 'end' }}>
+                    <div>
+                      <label style={{ fontSize: '11px', color: '#94a3b8' }}>Cargo</label>
+                      <input style={styles.input} type="text" placeholder="Ex: Supervisor" value={f.cargo} onChange={e => atualizarFuncaoNoModelo(f.id, 'cargo', e.target.value)} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', color: '#94a3b8' }}>Objectivo</label>
+                      <input style={styles.input} type="text" placeholder="Descrição..." value={f.objetivo} onChange={e => atualizarFuncaoNoModelo(f.id, 'objetivo', e.target.value)} />
+                    </div>
+                    <button style={{ ...styles.actionButton, color: '#ef4444', marginBottom: '8px' }} onClick={() => removerFuncaoDoModelo(f.id)}>
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Observações Gerais</label>
+                  <textarea style={styles.textarea} rows="2" value={novoModeloForm.observacoes} onChange={e => setNovoModeloForm({...novoModeloForm, observacoes: e.target.value})} placeholder="Instruções adicionais..."></textarea>
+                </div>
+              </div>
+              <div style={styles.modalActions}>
+                <button style={{ ...styles.button, backgroundColor: '#6b7280' }} onClick={() => setShowNovoModeloModal(false)}>Cancelar</button>
+                <button 
+                  style={styles.primaryButton} 
+                  onClick={() => {
+                    console.log('Botão Definir Modelo clicado');
+                    salvarModelo();
+                  }}
+                >
+                  Definir Modelo
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Modal Nova Brigada Operacional */}
+        {showNovaBrigadaModal && (
+          <div style={styles.modalOverlay}>
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} style={{ ...styles.modal, width: '500px' }}>
+              <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>Criar Unidade Operacional</h3>
+                <button style={styles.modalCloseButton} onClick={() => setShowNovaBrigadaModal(false)}>×</button>
+              </div>
+              <div style={styles.modalBody}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Modelo Base</label>
+                  <select 
+                    style={styles.select} 
+                    value={novaBrigadaForm.modelo_id} 
+                    onChange={e => setNovaBrigadaForm({...novaBrigadaForm, modelo_id: e.target.value})}
+                  >
+                    <option value="">Seleccione o Modelo...</option>
+                    {modelosBrigada.map(m => (
+                      <option key={m.id} value={m.id}>{m.nome} ({m.tipo.toUpperCase()})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Nome/Código da Unidade</label>
+                  <input 
+                    style={styles.input} 
+                    type="text" 
+                    placeholder="Ex: Brigada 04 - Estoril" 
+                    value={novaBrigadaForm.nome} 
+                    onChange={e => setNovaBrigadaForm({...novaBrigadaForm, nome: e.target.value})} 
+                  />
+                </div>
+
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Localização Geográfica (Manual)</label>
+                  <input 
+                    style={styles.input} 
+                    type="text" 
+                    placeholder="Ex: Escola Primária Completa do Estoril" 
+                    value={novaBrigadaForm.localizacao} 
+                    onChange={e => setNovaBrigadaForm({...novaBrigadaForm, localizacao: e.target.value})} 
+                  />
+                </div>
+
+                <MapaLocalizacao 
+                   distritoNome={user?.nome_completo?.replace('Admin Distrital ', '') || 'Beira'} 
+                   onSelect={(loc) => setNovaBrigadaForm({...novaBrigadaForm, localizacao: loc})}
+                   valorAtual={novaBrigadaForm.localizacao}
+                />
+
+                {novaBrigadaForm.modelo_id && (
+                  <div style={{ marginTop: '20px', borderTop: '1px solid #334155', paddingTop: '20px' }}>
+                    <h4 style={{ margin: '0 0 15px 0', color: '#d4a30d', fontSize: '14px' }}>Alocação de Membros (Conforme Modelo)</h4>
+                    {modelosBrigada.find(m => m.id === (novaBrigadaForm.modelo_id))?.funcoes?.map(funcao => (
+                      <div key={funcao.id} style={{ ...styles.formGroup, marginBottom: '12px' }}>
+                        <label style={{ ...styles.label, fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Função: {funcao.cargo}</span>
+                          <span style={{ color: '#64748b' }}>{funcao.objetivo}</span>
+                        </label>
+                        <select 
+                          style={styles.select}
+                          value={novaBrigadaForm.membros.find(m => m.funcao_id === funcao.id)?.candidato_id || ''}
+                          onChange={e => {
+                            const candidateId = e.target.value;
+                            const currentMembros = [...novaBrigadaForm.membros];
+                            const index = currentMembros.findIndex(m => m.funcao_id === funcao.id);
+                            
+                            if (index >= 0) {
+                              if (!candidateId) currentMembros.splice(index, 1);
+                              else currentMembros[index].candidato_id = candidateId;
+                            } else if (candidateId) {
+                              currentMembros.push({ funcao_id: funcao.id, candidato_id: candidateId });
+                            }
+                            
+                            setNovaBrigadaForm({ ...novaBrigadaForm, membros: currentMembros });
+                          }}
+                        >
+                          <option value="">Seleccione o Candidato...</option>
+                          {candidaturas
+                            .filter(c => c.estado_geral === 'aprovado')
+                            .map(c => (
+                              <option key={c.id} value={c.id}>
+                                {c.nome_completo} ({c.pontuacao_entrevista || 0} pts)
+                              </option>
+                            ))
+                          }
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={styles.modalActions}>
+                <button style={{ ...styles.button, backgroundColor: '#6b7280' }} onClick={() => setShowNovaBrigadaModal(false)}>Cancelar</button>
+                <button style={styles.primaryButton} onClick={salvarNovaBrigada}>
+                  <HardHat size={16} /> Criar Unidade
+                </button>
               </div>
             </motion.div>
           </div>
@@ -2374,7 +3395,28 @@ const styles = {
   },
   tr: {
     transition: 'background-color 0.2s', '&:hover': { backgroundColor: '#334155' }
-  }
+  },
+  viewToggle: {
+    display: 'flex',
+    backgroundColor: '#1E293B',
+    borderRadius: '8px',
+    padding: '4px',
+    border: '1px solid #334155',
+    marginRight: '8px'
+  },
+  toggleButton: (isActive) => ({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '36px',
+    height: '36px',
+    borderRadius: '6px',
+    border: 'none',
+    backgroundColor: isActive ? '#D4A30D' : 'transparent',
+    color: isActive ? '#000' : '#94A3B8',
+    cursor: 'pointer',
+    transition: 'all 0.2s'
+  })
 };
 
 export default App;

@@ -236,6 +236,46 @@ CREATE INDEX IF NOT EXISTS idx_notificacoes_lida ON public.notificacoes(lida);
 CREATE INDEX IF NOT EXISTS idx_turmas_estado ON public.turmas_formacao(estado);
 CREATE INDEX IF NOT EXISTS idx_logs_data ON public.logs_sistema(criado_em);
 
+-- 7. GESTÃO DE UNIDADES OPERACIONAIS (BRIGADAS, MMVs, AGENTES)
+CREATE TABLE IF NOT EXISTS public.modelos_equipa (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    nome TEXT NOT NULL,
+    processo_id UUID REFERENCES public.processos_eleitorais(id) ON DELETE CASCADE,
+    tipo TEXT NOT NULL CHECK (tipo IN ('brigada', 'agente', 'mmv')),
+    num_membros INTEGER NOT NULL,
+    observacoes TEXT,
+    criado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS public.funcoes_modelo (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    modelo_id UUID REFERENCES public.modelos_equipa(id) ON DELETE CASCADE,
+    cargo TEXT NOT NULL,
+    objetivo TEXT,
+    UNIQUE(modelo_id, cargo)
+);
+
+CREATE TABLE IF NOT EXISTS public.unidades_operacionais (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    nome TEXT NOT NULL,
+    modelo_id UUID REFERENCES public.modelos_equipa(id) ON DELETE CASCADE,
+    localizacao TEXT,
+    status_logistico TEXT DEFAULT 'completo', -- completo, alerta_deficit
+    criado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(nome, modelo_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.unidade_membros (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    unidade_id UUID REFERENCES public.unidades_operacionais(id) ON DELETE CASCADE,
+    funcao_id UUID REFERENCES public.funcoes_modelo(id) ON DELETE CASCADE,
+    candidatura_id UUID REFERENCES public.candidaturas(id) ON DELETE SET NULL,
+    UNIQUE(unidade_id, funcao_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unidades_modelo ON public.unidades_operacionais(modelo_id);
+CREATE INDEX IF NOT EXISTS idx_membros_unidade ON public.unidade_membros(unidade_id);
+
 -- DADOS DE CONFIGURAÇÃO INICIAL
 INSERT INTO public.categorias_cargo (nome, descricao) VALUES 
 ('MMV', 'Membro de Mesa de Voto'),

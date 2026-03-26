@@ -20,9 +20,18 @@ const App = () => {
       categoria_id: '',
       processo_id: '',
       provincia_actuacao_id: '',
+      distrito_actuacao_id: '',
+      posto_actuacao_id: '',
+      localidade_actuacao_id: '',
       documento_bi: null,
       documento_certificado: null,
       observacoes: ''
+   });
+
+   const [geoData, setGeoData] = useState({
+      distritos: [],
+      postos: [],
+      localidades: []
    });
 
    useEffect(() => {
@@ -69,6 +78,9 @@ const App = () => {
          formData.append('processo_id', submeterForm.processo_id || (configs.processos[0]?.id || ''));
          formData.append('categoria_id', submeterForm.categoria_id);
          formData.append('provincia_actuacao_id', submeterForm.provincia_actuacao_id);
+         formData.append('distrito_actuacao_id', submeterForm.distrito_actuacao_id);
+         formData.append('posto_actuacao_id', submeterForm.posto_actuacao_id);
+         formData.append('localidade_actuacao_id', submeterForm.localidade_actuacao_id);
          formData.append('observacoes', submeterForm.observacoes);
          formData.append('documento_bi', submeterForm.documento_bi);
          formData.append('documento_certificado', submeterForm.documento_certificado);
@@ -80,11 +92,11 @@ const App = () => {
 
          if (response.ok) {
             setView('sucesso');
-            setSubmeterForm({
-               primeiro_nome: '', apelido: '', nuit: '', bi_numero: '', contacto_principal: '', email: '', genero: 'Masculino',
-               categoria_id: '', processo_id: '', provincia_actuacao_id: '',
-               documento_bi: null, documento_certificado: null, observacoes: ''
-            });
+             setSubmeterForm({
+                primeiro_nome: '', apelido: '', nuit: '', bi_numero: '', contacto_principal: '', email: '', genero: 'Masculino',
+                categoria_id: '', processo_id: '', provincia_actuacao_id: '', distrito_actuacao_id: '', posto_actuacao_id: '', localidade_actuacao_id: '',
+                documento_bi: null, documento_certificado: null, observacoes: ''
+             });
          } else {
             const errorData = await response.json();
             alert(`Erro: ${errorData.error || 'Não foi possível submeter'}`);
@@ -107,6 +119,9 @@ const App = () => {
                handleSubmeterCandidatura={handleSubmeterCandidatura}
                configs={configs}
                loading={loading}
+               geoData={geoData}
+               setGeoData={setGeoData}
+               API_URL={API_URL}
             />
          )}
          {view === 'sucesso' && <SucessoView setView={setView} />}
@@ -148,7 +163,51 @@ const HomeView = ({ setView }) => (
    </motion.div>
 );
 
-const FormularioView = ({ setView, submeterForm, setSubmeterForm, handleSubmeterCandidatura, configs, loading }) => (
+const FormularioView = ({ setView, submeterForm, setSubmeterForm, handleSubmeterCandidatura, configs, loading, geoData, setGeoData, API_URL }) => {
+   
+   const handleProvinciaChange = async (provId) => {
+      setSubmeterForm(prev => ({ ...prev, provincia_actuacao_id: provId, distrito_actuacao_id: '', posto_actuacao_id: '', localidade_actuacao_id: '' }));
+      setGeoData(prev => ({ ...prev, distritos: [], postos: [], localidades: [] }));
+      if (!provId) return;
+
+      try {
+         const res = await fetch(`${API_URL}/api/config/distritos/${provId}`);
+         const data = await res.json();
+         setGeoData(prev => ({ ...prev, distritos: data.distritos || [] }));
+      } catch (err) {
+         console.error('Erro ao buscar distritos:', err);
+      }
+   };
+
+   const handleDistritoChange = async (distId) => {
+      setSubmeterForm(prev => ({ ...prev, distrito_actuacao_id: distId, posto_actuacao_id: '', localidade_actuacao_id: '' }));
+      setGeoData(prev => ({ ...prev, postos: [], localidades: [] }));
+      if (!distId) return;
+
+      try {
+         const res = await fetch(`${API_URL}/api/config/postos/${distId}`);
+         const data = await res.json();
+         setGeoData(prev => ({ ...prev, postos: data.postos || [] }));
+      } catch (err) {
+         console.error('Erro ao buscar postos:', err);
+      }
+   };
+
+   const handlePostoChange = async (postoId) => {
+      setSubmeterForm(prev => ({ ...prev, posto_actuacao_id: postoId, localidade_actuacao_id: '' }));
+      setGeoData(prev => ({ ...prev, localidades: [] }));
+      if (!postoId) return;
+
+      try {
+         const res = await fetch(`${API_URL}/api/config/localidades/${postoId}`);
+         const data = await res.json();
+         setGeoData(prev => ({ ...prev, localidades: data.localidades || [] }));
+      } catch (err) {
+         console.error('Erro ao buscar localidades:', err);
+      }
+   };
+
+   return (
    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} style={styles.container}>
       <button style={styles.backButton} onClick={() => setView('home')}>
          ← Voltar
@@ -221,12 +280,38 @@ const FormularioView = ({ setView, submeterForm, setSubmeterForm, handleSubmeter
                   </select>
                </div>
 
-               <div style={styles.formGroup}>
-                  <label style={styles.label}>Província de Actuação *</label>
-                  <select style={styles.input} value={submeterForm.provincia_actuacao_id} onChange={(e) => setSubmeterForm({ ...submeterForm, provincia_actuacao_id: e.target.value })} required>
-                     <option value="">Selecionar província</option>
-                     {configs.provincias.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                  </select>
+               <div style={styles.row}>
+                  <div style={styles.formGroup}>
+                     <label style={styles.label}>Província *</label>
+                     <select style={styles.input} value={submeterForm.provincia_actuacao_id} onChange={(e) => handleProvinciaChange(e.target.value)} required>
+                        <option value="">Província</option>
+                        {configs.provincias.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                     </select>
+                  </div>
+                  <div style={styles.formGroup}>
+                     <label style={styles.label}>Distrito *</label>
+                     <select style={styles.input} value={submeterForm.distrito_actuacao_id} onChange={(e) => handleDistritoChange(e.target.value)} required disabled={!submeterForm.provincia_actuacao_id}>
+                        <option value="">Distrito</option>
+                        {geoData.distritos.map(d => <option key={d.id} value={d.id}>{d.nome}</option>)}
+                     </select>
+                  </div>
+               </div>
+
+               <div style={styles.row}>
+                  <div style={styles.formGroup}>
+                     <label style={styles.label}>Posto Administrativo *</label>
+                     <select style={styles.input} value={submeterForm.posto_actuacao_id} onChange={(e) => handlePostoChange(e.target.value)} required disabled={!submeterForm.distrito_actuacao_id}>
+                        <option value="">Posto Adm.</option>
+                        {geoData.postos.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                     </select>
+                  </div>
+                  <div style={styles.formGroup}>
+                     <label style={styles.label}>Localidade *</label>
+                     <select style={styles.input} value={submeterForm.localidade_actuacao_id} onChange={(e) => setSubmeterForm({ ...submeterForm, localidade_actuacao_id: e.target.value })} required disabled={!submeterForm.posto_actuacao_id}>
+                        <option value="">Localidade</option>
+                        {geoData.localidades.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+                     </select>
+                  </div>
                </div>
             </div>
 
@@ -249,7 +334,7 @@ const FormularioView = ({ setView, submeterForm, setSubmeterForm, handleSubmeter
          </form>
       </div>
    </motion.div>
-);
+)};
 
 const SucessoView = ({ setView }) => (
    <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={styles.container}>
