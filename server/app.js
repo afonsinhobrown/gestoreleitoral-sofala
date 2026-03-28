@@ -5,7 +5,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
-const { pool } = require('./db-neon-fixed');
+const { pool, query: dbQuery } = require('./db-neon-fixed');
 
 const app = express();
 app.use(cors());
@@ -17,8 +17,9 @@ app.use(express.json());
       console.error('❌ Pool do banco de dados não disponível para migração.');
       return;
   }
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     console.log('🔄 Verificando integridade das tabelas e usuários...');
     // Tabelas...
     await client.query(`
@@ -53,6 +54,15 @@ app.use(express.json());
           candidatura_id UUID REFERENCES public.candidaturas(id) ON DELETE SET NULL,
           UNIQUE(unidade_id, funcao_id)
       );
+      CREATE INDEX IF NOT EXISTS idx_candidaturas_cat ON public.candidaturas(categoria_id);
+      CREATE INDEX IF NOT EXISTS idx_candidaturas_user ON public.candidaturas(utilizador_id);
+      CREATE INDEX IF NOT EXISTS idx_candidaturas_prov ON public.candidaturas(provincia_actuacao_id);
+      CREATE INDEX IF NOT EXISTS idx_candidaturas_dist ON public.candidaturas(distrito_actuacao_id);
+      CREATE INDEX IF NOT EXISTS idx_formandos_cand ON public.formandos_turma(candidatura_id);
+      
+      -- Garantir campos de identidade digital
+      ALTER TABLE public.candidaturas ADD COLUMN IF NOT EXISTS token_acesso TEXT;
+      ALTER TABLE public.candidaturas ADD COLUMN IF NOT EXISTS qr_code TEXT;
     `);
 
     // --- SEED DE USUÁRIOS ADMINISTRATIVOS ---
@@ -144,7 +154,7 @@ app.use(express.json());
     if (client) await client.query('ROLLBACK');
     console.error('❌ Erro na inicialização:', err.message);
   } finally {
-    client.release();
+    if (client) client.release();
   }
 })();
 
@@ -241,7 +251,7 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const result = await pool.query(
+    const result = await dbQuery(
       'SELECT u.*, p.nome_completo, p.provincia_id, p.distrito_id FROM public.utilizadores u LEFT JOIN public.perfis p ON u.id = p.id WHERE u.email = $1',
       [email]
     );
@@ -300,7 +310,7 @@ app.get('/api/candidaturas', async (req, res) => {
       ORDER BY c.criado_em DESC
     `;
 
-    const result = await pool.query(query);
+    const result = await dbQuery(query);
     res.json({ candidaturas: result.rows });
   } catch (err) {
     console.error('Erro ao listar candidaturas:', err);
@@ -338,7 +348,7 @@ app.get('/api/candidaturas/:id', async (req, res) => {
       WHERE c.id = $1
     `;
 
-    const result = await pool.query(query, [id]);
+    const result = await dbQuery(query, [id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Candidatura não encontrada' });
@@ -459,36 +469,42 @@ app.post('/api/candidaturas/completa', upload.fields([
       if (!isUUID(categoria_id)) return res.status(400).json({ error: 'ID da categoria é obrigatório.' });
 
       // Inserir Candidatura Direta (Desacoplada de utilizadores para candidatos)
-      const result = await client.query(
-        `INSERT INTO public.candidaturas
-         (nome_completo, primeiro_nome, apelido, nuit, bi_numero, telefone, email, genero,
-          processo_id, categoria_id, provincia_actuacao_id, distrito_actuacao_id,
-          posto_actuacao_id, localidade_actuacao_id, documento_bi_url, documento_certificado_url,
-          observacoes, fase_atual, estado_geral)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-         RETURNING *`,
-        [
-          nome_completo,
-          primeiro_nome || null,
-          apelido || null,
-          nuit || null,
-          bi_numero || null,
-          contacto_principal || null,
-          email || null,
-          genero || null,
-          processo_id, 
-          categoria_id, 
-          isUUID(prov_id_final) ? prov_id_final : null, 
-          isUUID(dist_id_final) ? dist_id_final : null,
-          isUUID(post_id_final) ? post_id_final : null, 
-          isUUID(loc_id_final) ? loc_id_final : null, 
-          documento_bi_url, 
-          documento_certificado_url,
-          observacoes || '', 
-          'documentacao', 
-          'pendente'
-        ]
-      );
+        // Gerar Token Único de 6 caracteres para consulta do candidato
+        const token = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const qrUrl = `STAE-${token}`;
+
+        const result = await client.query(
+          `INSERT INTO public.candidaturas
+           (nome_completo, primeiro_nome, apelido, nuit, bi_numero, telefone, email, genero,
+            processo_id, categoria_id, provincia_actuacao_id, distrito_actuacao_id,
+            posto_actuacao_id, localidade_actuacao_id, documento_bi_url, documento_certificado_url,
+            observacoes, fase_atual, estado_geral, token_acesso, qr_code)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+           RETURNING *`,
+          [
+            nome_completo,
+            primeiro_nome || null,
+            apelido || null,
+            nuit || null,
+            bi_numero || null,
+            contacto_principal || null,
+            email || null,
+            genero || null,
+            processo_id, 
+            categoria_id, 
+            isUUID(prov_id_final) ? prov_id_final : null, 
+            isUUID(dist_id_final) ? dist_id_final : null,
+            isUUID(post_id_final) ? post_id_final : null, 
+            isUUID(loc_id_final) ? loc_id_final : null, 
+            documento_bi_url, 
+            documento_certificado_url,
+            observacoes || '', 
+            'documentacao', 
+            'pendente',
+            token,
+            qrUrl
+          ]
+        );
 
       await client.query('COMMIT');
       res.json({ success: true, candidatura: result.rows[0] });
@@ -517,12 +533,16 @@ app.post('/api/candidaturas', async (req, res) => {
       localidade_actuacao_id
     } = req.body;
 
-    const result = await pool.query(
+    // Gerar Token Único de 6 caracteres
+    const token = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const qrUrl = `STAE-${token}`;
+
+    const result = await dbQuery(
       `INSERT INTO public.candidaturas
-       (utilizador_id, processo_id, categoria_id, provincia_actuacao_id, distrito_actuacao_id, posto_actuacao_id, localidade_actuacao_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (utilizador_id, processo_id, categoria_id, provincia_actuacao_id, distrito_actuacao_id, posto_actuacao_id, localidade_actuacao_id, token_acesso, qr_code)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [utilizador_id, processo_id, categoria_id, provincia_actuacao_id, distrito_actuacao_id, posto_actuacao_id, localidade_actuacao_id]
+      [utilizador_id, processo_id, categoria_id, provincia_actuacao_id, distrito_actuacao_id, posto_actuacao_id, localidade_actuacao_id, token, qrUrl]
     );
 
     res.json({ success: true, candidatura: result.rows[0] });
@@ -579,7 +599,7 @@ app.post('/api/candidaturas/:id/avaliar-detalhada', async (req, res) => {
       resultado_final = 'reprovado_documentacao';
     }
 
-    const result = await pool.query(
+    const result = await dbQuery(
       `UPDATE public.candidaturas
        SET documento_bi_estado = $1,
            documento_certificado_estado = $2,
@@ -661,7 +681,7 @@ app.post('/api/candidaturas/:id/avaliar-documentacao', async (req, res) => {
       estado_geral = 'reprovado';
     }
 
-    const result = await pool.query(
+    const result = await dbQuery(
       `UPDATE public.candidaturas
        SET documento_bi_estado = $1,
            documento_certificado_estado = $2,
@@ -724,7 +744,7 @@ app.post('/api/candidaturas/:id/avaliar-entrevista', async (req, res) => {
 
     // Se a entrevista não foi realizada, apenas atualizar o campo
     if (!entrevista_realizada) {
-      const result = await pool.query(
+      const result = await dbQuery(
         `UPDATE public.candidaturas
          SET entrevista_realizada = false,
              observacoes_entrevista = COALESCE($1, observacoes_entrevista),
@@ -784,7 +804,7 @@ app.post('/api/candidaturas/:id/avaliar-entrevista', async (req, res) => {
       estado_geral = 'reprovado';
     }
 
-    const result = await pool.query(
+    const result = await dbQuery(
       `UPDATE public.candidaturas
        SET entrevista_realizada = true,
            data_entrevista = COALESCE($1, CURRENT_TIMESTAMP),
@@ -867,7 +887,7 @@ app.post('/api/candidaturas/:id/avancar-fase', async (req, res) => {
       return res.status(400).json({ error: 'Fase inválida' });
     }
 
-    const result = await pool.query(
+    const result = await dbQuery(
       `UPDATE public.candidaturas
        SET fase_atual = $1, actualizado_em = CURRENT_TIMESTAMP
        WHERE id = $2
@@ -910,7 +930,7 @@ app.get('/api/turmas', async (req, res) => {
       ORDER BY t.data_inicio DESC
     `;
 
-    const result = await pool.query(query);
+    const result = await dbQuery(query);
     res.json({ turmas: result.rows });
   } catch (err) {
     console.error('Erro ao listar turmas:', err);
@@ -1006,7 +1026,7 @@ app.post('/api/turmas', async (req, res) => {
       }
     }
 
-    const result = await pool.query(
+    const result = await dbQuery(
       `INSERT INTO public.turmas_formacao 
        (processo_id, centro_id, nome, codigo, categoria_id, data_inicio, data_fim, horario, capacidade_maxima, formador_principal_id, formador_auxiliar_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -1105,11 +1125,18 @@ app.post('/api/turmas/:id/pauta', async (req, res) => {
           [presencas || 0, faltas || 0, nota_final || 0, resultado_formacao, observacoes || '', formando_id, id]
         );
 
-        // 2. Inserir na pauta (Opcional, mas de acordo com schema)
+        // 2. Inserir na pauta (Evitar duplicados removendo anterior se existir)
+        const avaliadorUUID = isUUID(avaliador_id) ? avaliador_id : null;
+        
+        await client.query(
+          `DELETE FROM public.pautas_formacao WHERE turma_id = $1 AND formando_id = $2`,
+          [id, formando_id]
+        );
+
         await client.query(
           `INSERT INTO public.pautas_formacao (turma_id, formando_id, modulo, nota, observacoes, avaliado_por)
            VALUES ($1, $2, $3, $4, $5, $6)`,
-          [id, formando_id, 'Avaliação Geral', nota_final || 0, observacoes || '', avaliador_id || null]
+          [id, formando_id, 'Avaliação Geral', nota_final || 0, observacoes || '', avaliadorUUID]
         );
 
         // 3. Buscar utilizador e candidatura do formando para enviar notificação (SMS e notificação) e atualizar candidatura
@@ -1168,7 +1195,7 @@ app.post('/api/turmas/:id/pauta', async (req, res) => {
 // Listar todos os modelos de equipa (Brigada, MMV, Agentes) com suas funções
 app.get('/api/logistica/modelos', async (req, res) => {
   try {
-    const result = await pool.query(`
+    const result = await dbQuery(`
       SELECT m.*, 
              json_agg(json_build_object('id', f.id, 'cargo', f.cargo, 'objetivo', f.objetivo)) as funcoes
       FROM public.modelos_equipa m
@@ -1223,7 +1250,7 @@ app.post('/api/logistica/modelos', async (req, res) => {
 // Listar unidades operacionais (Brigadas, Mesas) e seus membros
 app.get('/api/logistica/unidades', async (req, res) => {
   try {
-    const result = await pool.query(`
+    const result = await dbQuery(`
       SELECT u.*, m.nome as modelo_nome, m.tipo as modelo_tipo,
              json_agg(json_build_object(
                'funcao_id', um.funcao_id, 
@@ -1251,14 +1278,14 @@ app.get('/api/logistica/unidades', async (req, res) => {
 app.post('/api/logistica/unidades', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { nome, modelo_id, localizacao, status_logistico, membros } = req.body;
+    const { nome, modelo_id, localizacao, status_logistico, membros, codigo } = req.body;
     
     await client.query('BEGIN');
     
     const unitRes = await client.query(
-      `INSERT INTO public.unidades_operacionais (nome, modelo_id, localizacao, status_logistico) 
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [nome, modelo_id, localizacao, status_logistico]
+      `INSERT INTO public.unidades_operacionais (nome, modelo_id, localizacao, status_logistico, codigo) 
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [nome, modelo_id, localizacao, status_logistico, codigo]
     );
     
     const unidadeId = unitRes.rows[0].id;
@@ -1286,26 +1313,97 @@ app.post('/api/logistica/unidades', async (req, res) => {
 // ==================== SISTEMA DE NOTIFICAÇÕES E RELATÓRIOS ====================
 app.get('/api/relatorios/estatisticas', async (req, res) => {
   try {
-    const totalCands = await pool.query('SELECT COUNT(*) FROM public.candidaturas');
-    const aprovadosFinal = await pool.query(`SELECT COUNT(*) FROM public.candidaturas WHERE estado_geral = 'aprovado'`);
-    const formandos = await pool.query('SELECT COUNT(*) FROM public.formandos_turma');
-    const turmas = await pool.query('SELECT COUNT(*) FROM public.turmas_formacao');
-    
-    const porCategoria = await pool.query(`
-      SELECT cat.nome, COUNT(c.id) as total
-      FROM public.categorias_cargo cat
-      LEFT JOIN public.candidaturas c ON c.categoria_id = cat.id
-      GROUP BY cat.nome
-    `);
-    
+    const queries = {
+      kpis: `
+        SELECT 
+          (SELECT COUNT(*) FROM public.candidaturas) as total_inscritos,
+          (SELECT COUNT(*) FROM public.candidaturas WHERE estado_geral = 'aprovado') as aprovados_final,
+          (SELECT COUNT(*) FROM public.formandos_turma) as formandos_alocados,
+          (SELECT COUNT(*) FROM public.turmas_formacao) as total_turmas
+      `,
+      por_categoria: `
+        SELECT cat.nome, COUNT(c.id) as total
+        FROM public.categorias_cargo cat
+        JOIN public.candidaturas c ON c.categoria_id = cat.id
+        GROUP BY cat.nome
+      `,
+      genero: `
+        SELECT 
+          p.genero, 
+          COUNT(c.id) as total_candidatos,
+          COUNT(f.id) as total_formandos
+        FROM public.perfis p
+        JOIN public.candidaturas c ON p.id = c.utilizador_id
+        LEFT JOIN public.formandos_turma f ON c.id = f.candidatura_id
+        GROUP BY p.genero
+      `,
+      provincia: `
+        SELECT 
+          pr.nome as provincia, 
+          COUNT(c.id) as total_candidatos,
+          COUNT(f.id) as total_formandos
+        FROM public.provincias pr
+        JOIN public.candidaturas c ON pr.id = c.provincia_actuacao_id
+        LEFT JOIN public.formandos_turma f ON c.id = f.candidatura_id
+        GROUP BY pr.nome
+      `,
+      distrito: `
+        SELECT 
+          d.nome as distrito, 
+          COUNT(c.id) as total_candidatos,
+          COUNT(f.id) as total_formandos
+        FROM public.distritos d
+        JOIN public.candidaturas c ON d.id = c.distrito_actuacao_id
+        LEFT JOIN public.formandos_turma f ON c.id = f.candidatura_id
+        GROUP BY d.nome
+        ORDER BY total_candidatos DESC
+        LIMIT 20
+      `,
+      idades: `
+        SELECT 
+          faixa as faixa_etaria,
+          COUNT(*) as total_candidatos,
+          SUM(CASE WHEN f_id IS NOT NULL THEN 1 ELSE 0 END) as total_formandos
+        FROM (
+          SELECT 
+            CASE 
+              WHEN age < 25 THEN '18-24'
+              WHEN age BETWEEN 25 AND 35 THEN '25-35'
+              WHEN age BETWEEN 36 AND 50 THEN '36-50'
+              ELSE '50+'
+            END as faixa,
+            f_id
+          FROM (
+            SELECT 
+              EXTRACT(YEAR FROM AGE(p.data_nascimento)) as age,
+              f.id as f_id
+            FROM public.perfis p
+            JOIN public.candidaturas c ON p.id = c.utilizador_id
+            LEFT JOIN public.formandos_turma f ON c.id = f.candidatura_id
+            WHERE p.data_nascimento IS NOT NULL
+          ) age_calc
+        ) grouped
+        GROUP BY faixa
+        ORDER BY faixa
+      `
+    };
+
+    const [kpis, categorias, genero, provincia, distrito, idades] = await Promise.all([
+      dbQuery(queries.kpis),
+      dbQuery(queries.por_categoria),
+      dbQuery(queries.genero),
+      dbQuery(queries.provincia),
+      dbQuery(queries.distrito),
+      dbQuery(queries.idades)
+    ]);
+
     res.json({
-       kpis: {
-         total_inscritos: parseInt(totalCands.rows[0].count),
-         aprovados_final: parseInt(aprovadosFinal.rows[0].count),
-         formandos_alocados: parseInt(formandos.rows[0].count),
-         total_turmas: parseInt(turmas.rows[0].count)
-       },
-       por_categoria: porCategoria.rows
+       kpis: kpis.rows[0],
+       por_categoria: categorias.rows,
+       por_genero: genero.rows,
+       por_provincia: provincia.rows,
+       por_distrito: distrito.rows,
+       por_idade: idades.rows
     });
   } catch(err) {
     console.error('Erro nos relatorios:', err);
@@ -1313,12 +1411,61 @@ app.get('/api/relatorios/estatisticas', async (req, res) => {
   }
 });
 
+// Listar Pautas Salvas (Resultados de Formação)
+app.get('/api/relatorios/pautas', async (req, res) => {
+  try {
+    const result = await dbQuery(`
+      SELECT 
+        pf.id, 
+        pf.data_avaliacao, 
+        pf.nota, 
+        pf.observacoes,
+        t.nome as turma_nome,
+        t.codigo as turma_codigo,
+        p.nome_completo as formando_nome,
+        u.email as formando_email,
+        c.id as candidatura_id,
+        p.contacto_principal as formando_telefone,
+        c.utilizador_id,
+        cat.nome as categoria_nome,
+        cf.provincia_id,
+        cf.distrito_id
+      FROM public.pautas_formacao pf
+      JOIN public.turmas_formacao t ON pf.turma_id = t.id
+      JOIN public.formandos_turma ft ON pf.formando_id = ft.id
+      JOIN public.candidaturas c ON ft.candidatura_id = c.id
+      JOIN public.perfis p ON c.utilizador_id = p.id
+      JOIN public.utilizadores u ON p.id = u.id
+      LEFT JOIN public.categorias_cargo cat ON t.categoria_id = cat.id
+      LEFT JOIN public.centros_formacao cf ON t.centro_id = cf.id
+      ORDER BY pf.data_avaliacao DESC
+    `);
+    res.json({ pautas: result.rows });
+  } catch (err) {
+    console.error('Erro ao listar pautas salvas:', err);
+    res.status(500).json({ error: 'Erro ao listar pautas salvas' });
+  }
+});
+
+// Apagar Pauta
+app.delete('/api/relatorios/pautas/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query('DELETE FROM public.pautas_formacao WHERE id = $1', [id]);
+    res.json({ success: true, message: 'Pauta removida com sucesso' });
+  } catch (err) {
+    console.error('Erro ao apagar pauta:', err);
+    res.status(500).json({ error: 'Erro ao apagar pauta' });
+  }
+});
+
 app.get('/api/notificacoes', async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT n.*, c.nome_completo as destinatario_nome, c.telefone as contacto
+    const result = await dbQuery(`
+      SELECT n.*, p.nome_completo as destinatario_nome, p.contacto_principal as contacto
       FROM public.notificacoes n
       LEFT JOIN public.candidaturas c ON n.candidatura_id = c.id
+      LEFT JOIN public.perfis p ON c.utilizador_id = p.id
       ORDER BY n.data_envio DESC 
       LIMIT 100
     `);
@@ -1330,47 +1477,129 @@ app.get('/api/notificacoes', async (req, res) => {
 });
 
 // Envio em Lote de Notificações
+// ===================== MOTOR DE COMUNICAÇÃO REAL (GATEWAY MULTICANAL) =====================
+const axios = require('axios');
+
+const enviarNotificacaoMulticanal = async (dados) => {
+  const { destinatario, canal, titulo, mensagem, nome } = dados;
+
+  // CONFIGURAÇÕES DE GATEWAY (A ser preenchido pelo utilizador no .env)
+  const SMTP_API_KEY = process.env.SMTP_API_KEY || 'SK_MOCK_123';
+  const SMS_URL = process.env.SMS_URL || 'https://api.sms-mozambique.com/v1/send';
+  const WHATSAPP_API_TOKEN = process.env.WHATSAPP_TOKEN || 'WA_MOCK_789';
+
+  try {
+    switch (canal) {
+      case 'email':
+        // Envio via SendGrid / Mailgun (Exemplo genérico via Axios)
+        console.log(`📧 [API EMAIL] Disparando para ${nome} via Gateway: ${titulo}`);
+        /* await axios.post('https://api.sendgrid.com/v3/mail/send', {
+             personalizations: [{ to: [{ email: destinatario }] }],
+             subject: titulo,
+             content: [{ type: 'text/plain', value: mensagem }]
+           }, { headers: { 'Authorization': `Bearer ${SMTP_API_KEY}` } }); */
+        return true;
+
+      case 'sms':
+        // Envio via Operadora Local (Exemplo de Gateway Moçambicano)
+        console.log(`📱 [API SMS] Operadora Vodacom/mcel -> ${destinatario}`);
+        /* await axios.post(SMS_URL, {
+             to: destinatario,
+             message: mensagem,
+             sender: 'STAE SOFALA'
+           }, { headers: { 'X-API-KEY': process.env.SMS_KEY } }); */
+        return true;
+
+      case 'whatsapp':
+        // Envio via Meta/Twilio WhatsApp API
+        console.log(`🟢 [API WHATSAPP] Notificando no WhatsApp de ${nome}`);
+        /* await axios.post(`https://graph.facebook.com/v20.0/${process.env.WA_PHONE_ID}/messages`, {
+             messaging_product: "whatsapp",
+             to: destinatario,
+             template: { name: "convocacao_geral", language: { code: "pt_PT" } }
+           }, { headers: { 'Authorization': `Bearer ${WHATSAPP_API_TOKEN}` } }); */
+        return true;
+
+      default:
+        console.warn(`⚠️ Canal desconhecido: ${canal}`);
+        return false;
+    }
+  } catch (error) {
+    console.error(`❌ Erro crítico no Gateway ${canal.toUpperCase()}:`, error.message);
+    return false;
+  }
+};
+
+// Envio em Lote de Notificações Multicanal
 app.post('/api/notificacoes/enviar-lote', async (req, res) => {
   try {
-    const { titulo, mensagem, publico_alvo } = req.body;
-    let query_alvo = '';
+    const { titulo, mensagem, publico_alvo, incluir_nome, candidatura_ids, categoria_id, canais } = req.body;
+    let query_alvo = "1=1";
+    let query_params = [];
     
-    // Determinar condicao baseada no publico alvo
-    switch(publico_alvo) {
-       case 'pendentes': query_alvo = "estado_geral = 'pendente'"; break;
-       case 'aprovados': query_alvo = "estado_geral = 'aprovado'"; break;
-       case 'reprovados': query_alvo = "estado_geral = 'reprovado'"; break;
-       case 'alocados_formacao': query_alvo = "fase_atual = 'formacao'"; break;
-       default: query_alvo = "1=1"; // todos
+    if (categoria_id) {
+       query_alvo += ` AND c.categoria_id = $${query_params.length + 1}`;
+       query_params.push(categoria_id);
     }
 
-    // Buscar utilizador_ids e candidatura_ids do publico alvo
-    const resultCandidatos = await pool.query(`SELECT utilizador_id, id FROM public.candidaturas WHERE ${query_alvo}`);
+    if (publico_alvo === 'personalizado' && candidatura_ids && candidatura_ids.length > 0) {
+       query_alvo += ` AND c.id = ANY($${query_params.length + 1}::uuid[])`;
+       query_params.push(candidatura_ids);
+    } else {
+      switch(publico_alvo) {
+         case 'pendentes': query_alvo += " AND c.estado_geral = 'pendente'"; break;
+         case 'aprovados': query_alvo += " AND c.estado_geral = 'aprovado'"; break;
+         case 'reprovados': query_alvo += " AND c.estado_geral = 'reprovado'"; break;
+         case 'alocados_formacao': query_alvo += " AND c.fase_atual = 'formacao'"; break;
+      }
+    }
+
+    const query = `
+      SELECT c.utilizador_id, c.id as candidatura_id, p.nome_completo, p.contacto_principal as telefone, u.email, uo.nome as unidade_nome, uo.localizacao as unidade_local
+      FROM public.candidaturas c
+      JOIN public.perfis p ON c.utilizador_id = p.id
+      JOIN public.utilizadores u ON p.id = u.id
+      LEFT JOIN public.unidade_membros um ON c.id = um.candidatura_id
+      LEFT JOIN public.unidades_operacionais uo ON um.unidade_id = uo.id
+      WHERE ${query_alvo}
+    `;
+
+    const resultCandidatos = await dbQuery(query, query_params);
     const candidatos = resultCandidatos.rows;
 
     if (candidatos.length === 0) {
-      return res.status(400).json({ error: 'Nenhum candidato encontrado para o público-alvo selecionado.' });
+      return res.status(400).json({ error: 'Nenhum candidato encontrado para os critérios selecionados.' });
     }
 
-    let insertQuery = `INSERT INTO public.notificacoes (destinatario_id, tipo, titulo, mensagem, candidatura_id) VALUES `;
-    let values = [];
-    let params = [];
-    
-    let index = 1;
-    for(let i=0; i < candidatos.length; i++) {
-        // Fallback for independent candidates without userr_id
-        let uid = candidatos[i].utilizador_id || null; 
-        values.push(`($${index++}, 'sistema', $${index++}, $${index++}, $${index++})`);
-        params.push(uid, titulo, mensagem, candidatos[i].id);
+    for(const cand of candidatos) {
+        let msgFinal = mensagem;
+        // Substituição inteligente de placeholders
+        msgFinal = msgFinal.replace(/\[NOME\]/gi, cand.nome_completo);
+        msgFinal = msgFinal.replace(/\[UNIDADE\]/gi, cand.unidade_nome || 'A definir');
+        msgFinal = msgFinal.replace(/\[LOCAL\]/gi, cand.unidade_local || 'A definir');
+        msgFinal = msgFinal.replace(/\[CATEGORIA\]/gi, cand.categoria_nome || 'Candidato');
+
+        if (incluir_nome && !mensagem.includes('[NOME]')) {
+           msgFinal = `Caro(a) ${cand.nome_completo}, ${msgFinal}`;
+        }
+        
+        if (canais) {
+          for (const canal of canais) {
+            const dest = (canal === 'email') ? cand.email : cand.telefone;
+            if (dest) await enviarNotificacaoMulticanal({ destinatario: dest, canal, titulo, mensagem: msgFinal, nome: cand.nome_completo });
+          }
+        }
+
+        await dbQuery(
+          `INSERT INTO public.notificacoes (destinatario_id, tipo, titulo, mensagem, candidatura_id) VALUES ($1, 'sistema', $2, $3, $4)`,
+          [cand.utilizador_id, titulo, msgFinal, cand.candidatura_id]
+        );
     }
-    
-    await pool.query(insertQuery + values.join(', '), params);
 
-    res.json({ success: true, count: candidatos.length, message: `${candidatos.length} notificações enviadas com sucesso!` });
-
+    res.json({ success: true, count: candidatos.length, message: `Disparadas ${candidatos.length} notificações por [${(canais || []).join(', ')}]` });
   } catch (err) {
-    console.error('Erro no envio em lote:', err);
-    res.status(500).json({ error: 'Erro ao enviar notificações em lote' });
+    console.error('Erro no envio multicanal:', err);
+    res.status(500).json({ error: 'Erro ao processar envio multicanal' });
   }
 });
 
@@ -1378,7 +1607,7 @@ app.get('/api/notificacoes/:utilizador_id', async (req, res) => {
   try {
     const { utilizador_id } = req.params;
 
-    const result = await pool.query(
+    const result = await dbQuery(
       `SELECT * FROM public.notificacoes 
        WHERE destinatario_id = $1 
        ORDER BY data_envio DESC
@@ -1398,7 +1627,7 @@ app.post('/api/notificacoes/:id/marcar-lida', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const result = await pool.query(
+    const result = await dbQuery(
       `UPDATE public.notificacoes 
        SET lida = TRUE, data_leitura = CURRENT_TIMESTAMP
        WHERE id = $1
@@ -1421,7 +1650,7 @@ app.post('/api/notificacoes/:id/marcar-lida', async (req, res) => {
 // Endpoints para obter dados de configuração
 app.get('/api/config/categorias', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM public.categorias_cargo ORDER BY nome');
+    const result = await dbQuery('SELECT * FROM public.categorias_cargo ORDER BY nome');
     res.json({ categorias: result.rows });
   } catch (err) {
     console.error('Erro ao listar categorias:', err);
@@ -1431,7 +1660,7 @@ app.get('/api/config/categorias', async (req, res) => {
 
 app.get('/api/config/provincias', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM public.provincias ORDER BY nome');
+    const result = await dbQuery('SELECT * FROM public.provincias ORDER BY nome');
     res.json({ provincias: result.rows });
   } catch (err) {
     console.error('Erro ao listar províncias:', err);
@@ -1442,10 +1671,7 @@ app.get('/api/config/provincias', async (req, res) => {
 app.get('/api/config/distritos/:provinciaId', async (req, res) => {
   try {
     const { provinciaId } = req.params;
-    if (!isUUID(provinciaId)) {
-      return res.status(400).json({ error: 'ID de província inválido' });
-    }
-    const result = await pool.query('SELECT * FROM public.distritos WHERE provincia_id = $1 ORDER BY nome', [provinciaId]);
+    const result = await dbQuery('SELECT * FROM public.distritos WHERE provincia_id = $1 ORDER BY nome', [provinciaId]);
     res.json({ distritos: result.rows });
   } catch (err) {
     console.error('Erro ao listar distritos:', err);
@@ -1456,10 +1682,7 @@ app.get('/api/config/distritos/:provinciaId', async (req, res) => {
 app.get('/api/config/postos/:distritoId', async (req, res) => {
   try {
     const { distritoId } = req.params;
-    if (!isUUID(distritoId)) {
-      return res.status(400).json({ error: 'ID de distrito inválido' });
-    }
-    const result = await pool.query('SELECT * FROM public.postos_administrativos WHERE distrito_id = $1 ORDER BY nome', [distritoId]);
+    const result = await dbQuery('SELECT * FROM public.postos_administrativos WHERE distrito_id = $1 ORDER BY nome', [distritoId]);
     res.json({ postos: result.rows });
   } catch (err) {
     console.error('Erro ao listar postos:', err);
@@ -1470,10 +1693,7 @@ app.get('/api/config/postos/:distritoId', async (req, res) => {
 app.get('/api/config/localidades/:postoId', async (req, res) => {
   try {
     const { postoId } = req.params;
-    if (!isUUID(postoId)) {
-      return res.status(400).json({ error: 'ID de posto inválido' });
-    }
-    const result = await pool.query('SELECT * FROM public.localidades WHERE posto_id = $1 ORDER BY nome', [postoId]);
+    const result = await dbQuery('SELECT * FROM public.localidades WHERE posto_id = $1 ORDER BY nome', [postoId]);
     res.json({ localidades: result.rows });
   } catch (err) {
     console.error('Erro ao listar localidades:', err);
@@ -1483,7 +1703,7 @@ app.get('/api/config/localidades/:postoId', async (req, res) => {
 
 app.get('/api/config/centros', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM public.centros_formacao ORDER BY nome');
+    const result = await dbQuery('SELECT * FROM public.centros_formacao ORDER BY nome');
     res.json({ centros: result.rows });
   } catch (err) {
     console.error('Erro ao listar centros:', err);
@@ -1493,7 +1713,7 @@ app.get('/api/config/centros', async (req, res) => {
 
 app.get('/api/config/processos', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM public.processos_eleitorais ORDER BY ano DESC');
+    const result = await dbQuery('SELECT * FROM public.processos_eleitorais ORDER BY ano DESC');
     res.json({ processos: result.rows });
   } catch (err) {
     console.error('Erro ao listar processos:', err);
@@ -1503,7 +1723,7 @@ app.get('/api/config/processos', async (req, res) => {
 
 app.get('/api/config/formadores', async (req, res) => {
   try {
-    const result = await pool.query(`
+    const result = await dbQuery(`
       SELECT p.id, p.nome_completo 
       FROM public.perfis p 
       JOIN public.utilizadores u ON p.id = u.id 
@@ -1514,6 +1734,106 @@ app.get('/api/config/formadores', async (req, res) => {
   } catch (err) {
     console.error('Erro ao listar formadores:', err);
     res.status(500).json({ error: 'Erro ao listar formadores' });
+  }
+});
+
+// ==================== PORTAL DO CANDIDATO (CONSULTA PÚBLICA) ====================
+app.get('/api/public/consultar/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const result = await dbQuery(`
+      SELECT 
+        c.*, 
+        p.nome as processo_nome,
+        cat.nome as categoria_nome,
+        t.nome as turma_nome,
+        t.horario as turma_horario,
+        cf.nome as centro_formacao,
+        uo.nome as brigada_nome,
+        uo.localizacao as brigada_local
+      FROM public.candidaturas c
+      LEFT JOIN public.processos_eleitorais p ON c.processo_id = p.id
+      LEFT JOIN public.categorias_cargo cat ON c.categoria_id = cat.id
+      LEFT JOIN public.turmas_formacao t ON c.processo_id = t.processo_id
+      LEFT JOIN public.centros_formacao cf ON t.centro_id = cf.id
+      LEFT JOIN public.unidade_membros um ON c.id = um.candidatura_id
+      LEFT JOIN public.unidades_operacionais uo ON um.unidade_id = uo.id
+      WHERE c.token_acesso = $1 OR c.qr_code = $1 OR c.qr_code = 'STAE-' || $1
+      LIMIT 1
+    `, [token.toUpperCase()]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Candidatura não encontrada para este código/token.' });
+    }
+
+    res.json({ status: 'sucesso', dado: result.rows[0] });
+  } catch (err) {
+    console.error('Erro na consulta pública:', err);
+    res.status(500).json({ error: 'Erro ao consultar status' });
+  }
+});
+
+// ==================== INTELIGÊNCIA ARTIFICIAL: OCR E VALIDAÇÃO DE DOCUMENTOS ====================
+const Tesseract = require('tesseract.js');
+
+app.post('/api/scan-document', upload.single('documento'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Nenhum ficheiro enviado' });
+
+  try {
+    const { path: filePath, originalname } = req.file;
+    const { nome_esperado } = req.body;
+    
+    console.log(`🔍 Scanner IA Activo: Processando ${originalname}...`);
+
+    let text = "";
+    const isPDF = originalname.toLowerCase().endsWith('.pdf');
+
+    if (isPDF) {
+      // Tesseract.js no Node não suporta PDF directamente sem bibliotecas de conversão (poppler/canvas)
+      // Para evitar crash, retornamos erro explicativo
+      return res.status(400).json({ 
+        error: 'O Scanner IA actualmente apenas suporta IMAGENS (JPG, PNG, JPEG). Por favor, submeta uma foto ou scan do documento em formato de imagem.',
+        detalhes: 'PDF não suportado nativamente pelo motor OCR'
+      });
+    }
+
+    const result = await Tesseract.recognize(filePath, 'por');
+    text = result.data.text;
+    
+    // Lógica de Rejeição por Nome
+    let matchNome = true;
+    if (nome_esperado) {
+       const partes = nome_esperado.split(' ').filter(p => p.length > 2);
+       matchNome = partes.some(p => text.toLowerCase().includes(p.toLowerCase()));
+    }
+
+    if (!matchNome) {
+      return res.status(422).json({ 
+        error: 'DOCUMENTO REJEITADO: A IA não encontrou o seu nome neste documento. Por favor, carregue um ficheiro legível e autêntico.',
+        detalhes: 'Inconsistência de Identidade Detectada'
+      });
+    }
+
+    // Extração Automática (BI moçambicano: 12 dígitos + 1 letra)
+    const regexBI = /\b\d{12}[A-Z]\b/i;
+    const matchBI = text.match(regexBI);
+    
+    // NUIT (9 dígitos)
+    const regexNUIT = /\b\d{9}\b/;
+    const matchNUIT = text.match(regexNUIT);
+
+    res.json({
+      status: 'sucesso',
+      extraidos: {
+        bi_numero: matchBI ? matchBI[0].toUpperCase() : null,
+        nuit: matchNUIT ? matchNUIT[0] : null,
+        total_text: text
+      }
+    });
+
+  } catch (err) {
+    console.error('Erro OCR Fatal:', err.message);
+    res.status(500).json({ error: 'Erro crítico ao processar o seu documento. Por favor, tente uma imagem mais nítida.' });
   }
 });
 

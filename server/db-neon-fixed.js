@@ -1,87 +1,71 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-console.log('🔧 Configurando conexão com Neon...');
-console.log('📡 Connection string:', process.env.DATABASE_URL ? 'Presente' : 'Faltando');
+console.log('🔧 Configurando conexão ultra-resiliente com Neon...');
 
-// Configuração específica para Neon
+// Melhores práticas para Neon/Serverless: keepAlive e timeouts curtos para idle
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false,
-        require: true
-    },
-    connectionTimeoutMillis: 30000, // 30 segundos
-    idleTimeoutMillis: 60000, // 1 minuto
-    max: 10,
-    allowExitOnIdle: true
+    connectionTimeoutMillis: 30000, // 30s para conectar
+    idleTimeoutMillis: 10000,      // Renovar conexões inativas mais rápido (10s)
+    max: 15,                       // Limite conservador para evitar exaustão
+    ssl: { rejectUnauthorized: false },
+    keepAlive: true,               // Manter canal TCP aberto
+    application_name: 'gestoreleitoral_api_v2'
 });
 
-// Testar conexão imediatamente
-async function testConnection() {
-    console.log('🧪 Testando conexão com Neon...');
-    const client = await pool.connect();
-    try {
-        const result = await client.query('SELECT NOW() as time, version() as version');
-        console.log('✅ Conexão estabelecida com sucesso!');
-        console.log('   Hora do servidor:', result.rows[0].time);
-        console.log('   Versão PostgreSQL:', result.rows[0].version.split('\n')[0]);
-
-        // Verificar se tabelas existem
-        const tables = await client.query(`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'public'
-      ORDER BY table_name
-    `);
-
-        console.log(`📊 Tabelas encontradas: ${tables.rows.length}`);
-        tables.rows.forEach((row, i) => {
-            if (i < 5) console.log(`   - ${row.table_name}`);
-        });
-        if (tables.rows.length > 5) console.log(`   ... e mais ${tables.rows.length - 5} tabelas`);
-
-        return true;
-    } catch (error) {
-        console.error('❌ Falha na conexão:', error.message);
-        console.error('🔍 Detalhes do erro:', error.code);
-
-        if (error.code === 'ECONNREFUSED') {
-            console.error('💡 Dica: Servidor PostgreSQL não está respondendo');
-        } else if (error.code === '28P01') {
-            console.error('💡 Dica: Senha incorreta ou usuário não existe');
-        } else if (error.code === '3D000') {
-            console.error('💡 Dica: Banco de dados não existe');
-        } else if (error.code === 'ENOTFOUND') {
-            console.error('💡 Dica: Host não encontrado - verifique a URL');
-        }
-
-        return false;
-    } finally {
-        client.release();
-    }
-}
-
-// Executar teste
-testConnection().then(success => {
-    if (success) {
-        console.log('🚀 Banco de dados pronto para uso!');
-    } else {
-        console.log('⚠️  Problemas com a conexão. O sistema pode não funcionar corretamente.');
-    }
+// CAPTURAR ERROS NO POOL (Crítico para evitar crashes)
+pool.on('error', (err, client) => {
+    console.error('🚨 [POOL ERROR] Erro inesperado em cliente inativo:', err.message);
+    // Não terminamos o processo, o Pool vai tentar criar novos clientes
 });
 
-// Exportar pool com tratamento de erro
-module.exports = {
-    query: async (text, params) => {
+// Motor de retentativa para Queries (Absorve instabilidades temporárias)
+const safeQuery = async (text, params, retries = 3) => {
+    let lastError;
+    for (let i = 0; i < retries; i++) {
         try {
             return await pool.query(text, params);
         } catch (error) {
-            console.error('❌ Erro na query:', error.message);
-            console.error('   Query:', text.substring(0, 100) + '...');
+            lastError = error;
+            const isConnectionError = 
+                error.message.includes('terminated unexpectedly') || 
+                error.message.includes('timeout') ||
+                error.code === 'ECONNRESET' || 
+                error.code === '57P01'; // admin_shutdown (Neon scaling)
+
+            if (isConnectionError && i < retries - 1) {
+                const wait = Math.pow(2, i) * 500;
+                console.warn(`⚠️  Falha na query (${error.message}). Re-tentando em ${wait}ms... (${i + 1}/${retries})`);
+                await new Promise(r => setTimeout(r, wait));
+                continue;
+            }
             throw error;
         }
-    },
+    }
+};
+
+async function testConnection(retries = 3) {
+    let client = null;
+    try {
+        console.log('🧪 Verificando heartbeat do banco de dados...');
+        client = await pool.connect();
+        const result = await client.query('SELECT NOW() as time');
+        console.log('✅ Heartbeat estável:', result.rows[0].time);
+        return true;
+    } catch (error) {
+        console.error('❌ Heartbeat falhou:', error.message);
+        return false;
+    } finally {
+        if (client) client.release();
+    }
+}
+
+// Heartbeat inicial
+testConnection();
+
+module.exports = {
+    query: safeQuery,
     pool,
     testConnection
 };

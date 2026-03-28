@@ -258,6 +258,7 @@ CREATE TABLE IF NOT EXISTS public.funcoes_modelo (
 CREATE TABLE IF NOT EXISTS public.unidades_operacionais (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     nome TEXT NOT NULL,
+    codigo TEXT UNIQUE,
     modelo_id UUID REFERENCES public.modelos_equipa(id) ON DELETE CASCADE,
     localizacao TEXT,
     status_logistico TEXT DEFAULT 'completo', -- completo, alerta_deficit
@@ -285,5 +286,30 @@ INSERT INTO public.categorias_cargo (nome, descricao) VALUES
 ON CONFLICT (nome) DO NOTHING;
 
 INSERT INTO public.provincias (nome, codigo) VALUES 
-('Sofala', 'SOF')
+('Maputo Cidade', '01'),
+('Maputo Província', '02'),
+('Gaza', '03'),
+('Inhambane', '04'),
+('Sofala', '05'),
+('Manica', '06'),
+('Tete', '07'),
+('Zambézia', '08'),
+('Nampula', '09'),
+('Cabo Delgado', '10'),
+('Niassa', '11')
 ON CONFLICT (nome) DO NOTHING;
+
+-- Exemplos de distritos para Sofala (05)
+DO $$
+DECLARE
+    sofala_id UUID;
+BEGIN
+    SELECT id INTO sofala_id FROM public.provincias WHERE nome = 'Sofala';
+    IF sofala_id IS NOT NULL THEN
+        INSERT INTO public.distritos (provincia_id, nome, codigo) VALUES 
+        (sofala_id, 'Beira', '001'),
+        (sofala_id, 'Dondo', '002'),
+        (sofala_id, 'Nhamatanda', '003')
+        ON CONFLICT (provincia_id, nome) DO NOTHING;
+    END IF;
+END $$;

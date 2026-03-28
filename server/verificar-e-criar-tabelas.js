@@ -5,9 +5,9 @@ const path = require('path');
 
 async function verificarECriarTabelas() {
     console.log('--- VERIFICANDO E CRIANDO TABELAS STAE ---');
-    const client = await pool.connect();
-
+    let client;
     try {
+        client = await pool.connect();
         // 1. Verificar quais tabelas existem
         const tabelasExistentes = await client.query(`
       SELECT table_name 
