@@ -761,17 +761,21 @@ const App = () => {
 
   const abrirModalDistribuir = (turma) => {
     setTurmaDistribuicaoSelecionada(turma);
-    // Filtrar candidatos disponíveis
-    const disponiveis = candidaturas.filter(c => 
-      c.categoria_id === turma.categoria_id && 
-      c.estado_geral === 'aprovado' && 
-      c.fase_atual !== 'afectacao' && 
-      c.fase_atual !== 'formacao'
-    );
+    // Filtrar candidatos disponíveis: Mesma categoria, Aprovados, e que não estejam já noutra fase avançada
+    const disponiveis = candidaturas.filter(c => {
+      const mesmaCategoria = String(c.categoria_id) === String(turma.categoria_id);
+      const estaAprovado = c.estado_geral === 'aprovado';
+      // Candidato não deve estar já em formação ou afectação (operação final)
+      const disponivelFase = c.fase_atual !== 'formacao' && c.fase_atual !== 'afectacao';
+      
+      return mesmaCategoria && estaAprovado && disponivelFase;
+    });
+    
     setCandidatosDisponiveis(disponiveis);
     setCandidatosSelecionados([]);
     setShowDistribuirModal(true);
   };
+
 
   const alternarSelecaoCandidato = (id) => {
     setCandidatosSelecionados(prev => 

@@ -334,10 +334,15 @@ const FormularioView = ({ setView, submeterForm, setSubmeterForm, handleSubmeter
       try {
          console.log(`📡 Carregando distritos para província: ${provId}`);
          const res = await fetch(`${API_URL}/api/config/distritos/${provId}`);
+         if (!res.ok) throw new Error('Erro ao buscar distritos');
          const data = await res.json();
          setGeoData(prev => ({ ...prev, distritos: data.distritos || [], postos: [], localidades: [] }));
-      } catch (err) { console.error('Erro ao carregar distritos:', err); }
+      } catch (err) { 
+         console.error('Erro ao carregar distritos:', err);
+         alert('⚠️ Erro ao carregar lista de distritos. Verifique a sua conexão com o servidor.');
+      }
    };
+
 
    const handleDistritoChange = async (distId) => {
       setSubmeterForm(prev => ({ ...prev, distrito_actuacao_id: distId, posto_actuacao_id: '', localidade_actuacao_id: '' }));

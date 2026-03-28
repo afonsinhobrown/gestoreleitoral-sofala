@@ -1068,13 +1068,18 @@ app.post('/api/turmas/:id/distribuir-formandos', async (req, res) => {
         throw new Error(`Apenas ${vagas_disponiveis} vagas disponíveis`);
       }
 
-      // Inserir formandos
+      // Inserir formandos e atualizar fase da candidatura
       for (const candidatura_id of candidatura_ids) {
         await client.query(
           `INSERT INTO public.formandos_turma (turma_id, candidatura_id)
            VALUES ($1, $2)
            ON CONFLICT (turma_id, candidatura_id) DO NOTHING`,
           [id, candidatura_id]
+        );
+        
+        await client.query(
+          `UPDATE public.candidaturas SET fase_atual = 'formacao' WHERE id = $1`,
+          [candidatura_id]
         );
       }
 
@@ -1671,6 +1676,9 @@ app.get('/api/config/provincias', async (req, res) => {
 app.get('/api/config/distritos/:provinciaId', async (req, res) => {
   try {
     const { provinciaId } = req.params;
+    if (!isUUID(provinciaId)) {
+      return res.json({ distritos: [] });
+    }
     const result = await dbQuery('SELECT * FROM public.distritos WHERE provincia_id = $1 ORDER BY nome', [provinciaId]);
     res.json({ distritos: result.rows });
   } catch (err) {
